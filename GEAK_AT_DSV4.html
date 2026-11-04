@@ -1,0 +1,359 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepSeek V4.1 CSA2 speedup timeline</title><style>
+.viz-root{color-scheme:light;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;
+ --grid:#e1e0d9;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--shade:rgba(137,135,129,.13)}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;--surface-1:#1a1a19;
+ --text-primary:#fff;--text-secondary:#c3c2b7;--grid:#2c2c2a;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--shade:rgba(195,194,183,.12)}}
+:root[data-theme="dark"] .viz-root{color-scheme:dark;--surface-1:#1a1a19;--text-primary:#fff;--text-secondary:#c3c2b7;--grid:#2c2c2a;
+ --border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--shade:rgba(195,194,183,.12)}
+body{margin:0;background:var(--surface-1)}
+.viz-root{background:var(--surface-1);color:var(--text-primary);font:14px/1.45 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;padding:20px 24px;max-width:1120px}
+h1{font-size:18px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 4px}
+.sub{color:var(--text-secondary);margin:0 0 12px;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--text-secondary);margin:6px 0 4px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0 4px}
+.stat{border:1px solid var(--border);border-radius:8px;padding:8px 12px}
+.stat .k{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px}
+.stat .v{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}.stat .m{font-size:12px;color:var(--muted)}
+.key{display:inline-block;width:14px;height:3px;border-radius:2px}.key.s1{background:var(--series-1)}.key.s2{background:var(--series-2)}
+svg.panel{width:100%;height:auto;display:block;overflow:visible}
+.grid{stroke:var(--grid);stroke-width:1}.base{stroke:var(--muted);stroke-width:1}
+.tick{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}.axis-t{fill:var(--text-secondary);font-size:12px}
+.shade{fill:var(--shade)}.shade-t{fill:var(--muted);font-size:11px}
+.fan{stroke-width:1;opacity:.35}.best{fill:none;stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.s1.fan,.s1.best,.s1.x{stroke:var(--series-1)}.s2.fan,.s2.best,.s2.x{stroke:var(--series-2)}
+.dot{stroke:var(--surface-1);stroke-width:2;cursor:pointer}.s1.dot,.s1.diamond{fill:var(--series-1)}.s2.dot,.s2.diamond{fill:var(--series-2)}
+.dot.hollow{fill:var(--surface-1);stroke-width:2}.s1.dot.hollow{stroke:var(--series-1)}.s2.dot.hollow{stroke:var(--series-2)}
+.x{stroke-width:2;stroke-linecap:round}.hit{fill:transparent;cursor:pointer}
+.diamond{stroke:var(--surface-1);stroke-width:2;cursor:pointer}.leader{stroke:var(--muted);stroke-width:1}
+.end-v{fill:var(--text-primary);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}.end-n{fill:var(--text-secondary);font-size:11px}
+[data-tip]:hover,[data-tip]:focus{outline:none;stroke:var(--text-primary)}
+#tip{position:fixed;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);
+ box-shadow:0 4px 14px rgba(0,0,0,.14);border-radius:6px;padding:6px 9px;font-size:12px;display:none;z-index:9;max-width:330px}
+#tip b{font-weight:600}#tip .m{color:var(--text-secondary)}
+details{margin-top:18px;font-size:12px}summary{cursor:pointer;color:var(--text-secondary)}
+table{border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
+td,th{border-bottom:1px solid var(--grid);padding:3px 10px;text-align:left}tr.fin td{font-weight:600}
+.note{color:var(--text-secondary);font-size:12px;margin-top:10px}
+</style></head><body><div class="viz-root"><h1>DeepSeek V4.1 CSA2 稀疏注意力：Official vs AT V4 优化进度</h1>
+<p class="sub">y = 每个方向的独立验证加权 speedup（相对冻结 vLLM baseline）；x = 距该 lane 启动的墙钟小时，两条 lane 共用同一连续时间轴，可直接比较同一时刻谁更高、谁先到终点。Official 于 10-13 04:06 UTC 启动，AT V4 于 10-13 14:10 UTC 启动；同为 Opus 5 / max effort / 20 方向预算 / flydsl。</p>
+<div class="stats"><div class="stat"><div class="k"><span class="key s1"></span>Prefill · Official</div><div class="v">5.57×</div><div class="m">17.4 h 完成 · 8 轮 · 预算 20/20</div></div><div class="stat"><div class="k"><span class="key s2"></span>Prefill · AT V4 (tune-only)</div><div class="v">5.26×</div><div class="m">14.8 h 完成 · 7 轮 · 预算 20/20</div></div><div class="stat"><div class="k"><span class="key s1"></span>Decode · Official</div><div class="v">1.93×</div><div class="m">9.7 h 完成 · 5 轮 · 预算 15/20</div></div><div class="stat"><div class="k"><span class="key s2"></span>Decode · AT V4 (tune-only)</div><div class="v">1.81×</div><div class="m">15.3 h 完成 · 7 轮 · 预算 20/20</div></div></div>
+<div class="legend"><span><span class="key s1"></span>Official</span><span><span class="key s2"></span>AT V4 (tune-only)</span><span>粗线 = 沿每轮最佳方向延续 → ◆ Director 最终验证</span><span>细线 = 上一轮最佳点 → 本轮每个方向</span><span>● 实心 = 本轮最佳方向 · ○ 空心 = 其它方向</span><span>✕ = 补丁应用失败（独立验证记 0）</span></div>
+<h2>Prefill · deepseek_v41_flash_csa2_prefill_real</h2>
+<svg class="panel" viewBox="0 0 1080 416" role="img" aria-label="Prefill · deepseek_v41_flash_csa2_prefill_real">
+<rect class="shade" x="272.8" y="16" width="49.2" height="330"/>
+<text class="shade-t" x="326.0" y="28">AT V4 API 429 中断→检查点恢复</text>
+<rect class="shade" x="583.6" y="16" width="13.7" height="330"/>
+<text class="shade-t" x="601.3" y="28">断网</text>
+<line class="base" x1="64" x2="930" y1="346.0" y2="346.0"/>
+<text class="tick" x="56" y="350.0" text-anchor="end">1×</text>
+<line class="grid" x1="64" x2="930" y1="280.0" y2="280.0"/>
+<text class="tick" x="56" y="284.0" text-anchor="end">2×</text>
+<line class="grid" x1="64" x2="930" y1="214.0" y2="214.0"/>
+<text class="tick" x="56" y="218.0" text-anchor="end">3×</text>
+<line class="grid" x1="64" x2="930" y1="148.0" y2="148.0"/>
+<text class="tick" x="56" y="152.0" text-anchor="end">4×</text>
+<line class="grid" x1="64" x2="930" y1="82.0" y2="82.0"/>
+<text class="tick" x="56" y="86.0" text-anchor="end">5×</text>
+<line class="grid" x1="64" x2="930" y1="16.0" y2="16.0"/>
+<text class="tick" x="56" y="20.0" text-anchor="end">6×</text>
+<line class="grid" x1="64.0" x2="64.0" y1="16" y2="346"/>
+<text class="tick" x="64.0" y="398" text-anchor="middle">0h</text>
+<line class="grid" x1="155.2" x2="155.2" y1="16" y2="346"/>
+<text class="tick" x="155.2" y="398" text-anchor="middle">2h</text>
+<line class="grid" x1="246.3" x2="246.3" y1="16" y2="346"/>
+<text class="tick" x="246.3" y="398" text-anchor="middle">4h</text>
+<line class="grid" x1="337.5" x2="337.5" y1="16" y2="346"/>
+<text class="tick" x="337.5" y="398" text-anchor="middle">6h</text>
+<line class="grid" x1="428.6" x2="428.6" y1="16" y2="346"/>
+<text class="tick" x="428.6" y="398" text-anchor="middle">8h</text>
+<line class="grid" x1="519.8" x2="519.8" y1="16" y2="346"/>
+<text class="tick" x="519.8" y="398" text-anchor="middle">10h</text>
+<line class="grid" x1="610.9" x2="610.9" y1="16" y2="346"/>
+<text class="tick" x="610.9" y="398" text-anchor="middle">12h</text>
+<line class="grid" x1="702.1" x2="702.1" y1="16" y2="346"/>
+<text class="tick" x="702.1" y="398" text-anchor="middle">14h</text>
+<line class="grid" x1="793.3" x2="793.3" y1="16" y2="346"/>
+<text class="tick" x="793.3" y="398" text-anchor="middle">16h</text>
+<line class="grid" x1="884.4" x2="884.4" y1="16" y2="346"/>
+<text class="tick" x="884.4" y="398" text-anchor="middle">18h</text>
+<text class="tick" x="56" y="354" text-anchor="end">失败</text>
+<line class="grid" x1="64" x2="930" y1="350" y2="350"/>
+<text class="axis-t" x="497.0" y="414" text-anchor="middle">距该 lane 启动的墙钟时间（小时，连续轴）</text>
+<line class="fan s1" x1="64.0" y1="346.0" x2="136.2" y2="233.2"/>
+<line class="fan s1" x1="64.0" y1="346.0" x2="148.6" y2="178.8"/>
+<line class="fan s1" x1="64.0" y1="346.0" x2="144.8" y2="181.0"/>
+<line class="fan s1" x1="148.6" y1="178.8" x2="247.1" y2="162.2"/>
+<line class="fan s1" x1="148.6" y1="178.8" x2="253.4" y2="168.2"/>
+<line class="fan s1" x1="148.6" y1="178.8" x2="244.7" y2="141.6"/>
+<line class="fan s1" x1="244.7" y1="141.6" x2="395.0" y2="140.1"/>
+<line class="fan s1" x1="244.7" y1="141.6" x2="393.1" y2="121.1"/>
+<line class="fan s1" x1="393.1" y1="121.1" x2="532.8" y2="99.9"/>
+<line class="fan s1" x1="532.8" y1="99.9" x2="599.1" y2="105.4"/>
+<line class="fan s1" x1="599.1" y1="105.4" x2="663.3" y2="95.3"/>
+<line class="fan s1" x1="663.3" y1="95.3" x2="751.5" y2="55.9"/>
+<line class="fan s1" x1="751.5" y1="55.9" x2="818.5" y2="50.7"/>
+<path class="best s1" d="M64.0,346.0 L148.6,178.8 L244.7,141.6 L393.1,121.1 L532.8,99.9 L599.1,105.4 L663.3,95.3 L751.5,55.9 L818.5,50.7 L855.3,44.6"/>
+<line class="fan s2" x1="64.0" y1="346.0" x2="142.6" y2="265.0"/>
+<line class="fan s2" x1="64.0" y1="346.0" x2="143.3" y2="229.5"/>
+<line class="fan s2" x1="64.0" y1="346.0" x2="137.4" y2="235.7"/>
+<line class="fan s2" x1="143.3" y1="229.5" x2="247.3" y2="199.3"/>
+<line class="fan s2" x1="143.3" y1="229.5" x2="227.5" y2="167.4"/>
+<line class="fan s2" x1="143.3" y1="229.5" x2="237.4" y2="183.8"/>
+<line class="fan s2" x1="227.5" y1="167.4" x2="423.5" y2="134.1"/>
+<line class="fan s2" x1="227.5" y1="167.4" x2="413.8" y2="152.7"/>
+<line class="fan s2" x1="423.5" y1="134.1" x2="492.6" y2="125.0"/>
+<line class="fan s2" x1="423.5" y1="134.1" x2="497.6" y2="122.9"/>
+<line class="fan s2" x1="497.6" y1="122.9" x2="568.2" y2="96.8"/>
+<line class="fan s2" x1="497.6" y1="122.9" x2="577.6" y2="117.5"/>
+<line class="fan s2" x1="497.6" y1="122.9" x2="563.2" y2="113.9"/>
+<line class="fan s2" x1="568.2" y1="96.8" x2="682.6" y2="61.7"/>
+<line class="fan s2" x1="568.2" y1="96.8" x2="682.5" y2="77.8"/>
+<path class="best s2" d="M64.0,346.0 L143.3,229.5 L227.5,167.4 L423.5,134.1 L497.6,122.9 L568.2,96.8 L682.6,61.7 L737.5,64.9"/>
+<circle class="dot s1 hollow" cx="136.2" cy="233.2" r="4" data-tip="Official · 第 1 轮 d0|独立验证 2.7086×|t = 1.58 h · 10-13 05:41 UTC" tabindex="0"/>
+<circle class="dot s1" cx="148.6" cy="178.8" r="5" data-tip="Official · 第 1 轮 d1 · 本轮最佳|独立验证 3.5326×|t = 1.86 h · 10-13 05:57 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="144.8" cy="181.0" r="4" data-tip="Official · 第 1 轮 d2|独立验证 3.5002×|t = 1.77 h · 10-13 05:52 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="247.1" cy="162.2" r="4" data-tip="Official · 第 2 轮 d0|独立验证 3.7848×|t = 4.02 h · 10-13 08:07 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="253.4" cy="168.2" r="4" data-tip="Official · 第 2 轮 d1|独立验证 3.6934×|t = 4.16 h · 10-13 08:15 UTC" tabindex="0"/>
+<circle class="dot s1" cx="244.7" cy="141.6" r="5" data-tip="Official · 第 2 轮 d2 · 本轮最佳|独立验证 4.0965×|t = 3.96 h · 10-13 08:04 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="395.0" cy="140.1" r="4" data-tip="Official · 第 3 轮 d0|独立验证 4.1203×|t = 7.26 h · 10-13 11:22 UTC" tabindex="0"/>
+<circle class="dot s1" cx="393.1" cy="121.1" r="5" data-tip="Official · 第 3 轮 d1 · 本轮最佳|独立验证 4.4071×|t = 7.22 h · 10-13 11:19 UTC" tabindex="0"/>
+<path class="x s1" d="M375.5,346 L383.5,354 M375.5,354 L383.5,346"/><circle class="hit" cx="379.5" cy="350" r="8" data-tip="Official · 第 3 轮 d2|补丁应用失败（记 0）|t = 6.92 h · 10-13 11:01 UTC" tabindex="0"/>
+<path class="x s1" d="M521.0,346 L529.0,354 M521.0,354 L529.0,346"/><circle class="hit" cx="525.0" cy="350" r="8" data-tip="Official · 第 4 轮 d0|补丁应用失败（记 0）|t = 10.12 h · 10-13 14:13 UTC" tabindex="0"/>
+<path class="x s1" d="M535.2,346 L543.2,354 M535.2,354 L543.2,346"/><circle class="hit" cx="539.2" cy="350" r="8" data-tip="Official · 第 4 轮 d1|补丁应用失败（记 0）|t = 10.43 h · 10-13 14:32 UTC" tabindex="0"/>
+<circle class="dot s1" cx="532.8" cy="99.9" r="5" data-tip="Official · 第 4 轮 d2 · 本轮最佳|独立验证 4.7288×|t = 10.29 h · 10-13 14:23 UTC" tabindex="0"/>
+<path class="x s1" d="M598.1,346 L606.1,354 M598.1,354 L606.1,346"/><circle class="hit" cx="602.1" cy="350" r="8" data-tip="Official · 第 5 轮 d0|补丁应用失败（记 0）|t = 11.81 h · 10-13 15:54 UTC" tabindex="0"/>
+<path class="x s1" d="M581.2,346 L589.2,354 M581.2,354 L589.2,346"/><circle class="hit" cx="585.2" cy="350" r="8" data-tip="Official · 第 5 轮 d1|补丁应用失败（记 0）|t = 11.44 h · 10-13 15:32 UTC" tabindex="0"/>
+<circle class="dot s1" cx="599.1" cy="105.4" r="5" data-tip="Official · 第 5 轮 d2 · 本轮最佳|独立验证 4.6451×|t = 11.74 h · 10-13 15:50 UTC" tabindex="0"/>
+<circle class="dot s1" cx="663.3" cy="95.3" r="5" data-tip="Official · 第 6 轮 d0 · 本轮最佳|独立验证 4.7990×|t = 13.15 h · 10-13 17:15 UTC" tabindex="0"/>
+<circle class="dot s1" cx="751.5" cy="55.9" r="5" data-tip="Official · 第 7 轮 d0 · 本轮最佳|独立验证 5.3956×|t = 15.08 h · 10-13 19:11 UTC" tabindex="0"/>
+<circle class="dot s1" cx="818.5" cy="50.7" r="5" data-tip="Official · 第 8 轮 d0 · 本轮最佳|独立验证 5.4737×|t = 16.55 h · 10-13 20:39 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="142.6" cy="265.0" r="4" data-tip="AT V4 (tune-only) · 第 1 轮 d0|独立验证 2.2272×|t = 1.72 h · 10-13 15:53 UTC" tabindex="0"/>
+<circle class="dot s2" cx="143.3" cy="229.5" r="5" data-tip="AT V4 (tune-only) · 第 1 轮 d1 · 本轮最佳|独立验证 2.7653×|t = 1.74 h · 10-13 15:54 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="137.4" cy="235.7" r="4" data-tip="AT V4 (tune-only) · 第 1 轮 d2|独立验证 2.6709×|t = 1.61 h · 10-13 15:46 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="247.3" cy="199.3" r="4" data-tip="AT V4 (tune-only) · 第 2 轮 d0|独立验证 3.2228×|t = 4.02 h · 10-13 18:11 UTC" tabindex="0"/>
+<circle class="dot s2" cx="227.5" cy="167.4" r="5" data-tip="AT V4 (tune-only) · 第 2 轮 d1 · 本轮最佳|独立验证 3.7062×|t = 3.59 h · 10-13 17:45 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="237.4" cy="183.8" r="4" data-tip="AT V4 (tune-only) · 第 2 轮 d2|独立验证 3.4569×|t = 3.80 h · 10-13 17:58 UTC" tabindex="0"/>
+<path class="x s2" d="M371.0,346 L379.0,354 M371.0,354 L379.0,346"/><circle class="hit" cx="375.0" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 3 轮 d0|补丁应用失败（记 0）|t = 6.82 h · 10-13 20:59 UTC" tabindex="0"/>
+<path class="x s2" d="M344.3,346 L352.3,354 M344.3,354 L352.3,346"/><circle class="hit" cx="348.3" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 3 轮 d1|补丁应用失败（记 0）|t = 6.24 h · 10-13 20:24 UTC" tabindex="0"/>
+<path class="x s2" d="M370.9,346 L378.9,354 M370.9,354 L378.9,346"/><circle class="hit" cx="374.9" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 3 轮 d2|补丁应用失败（记 0）|t = 6.82 h · 10-13 20:59 UTC" tabindex="0"/>
+<path class="x s2" d="M418.8,346 L426.8,354 M418.8,354 L426.8,346"/><circle class="hit" cx="422.8" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 4 轮 d0|补丁应用失败（记 0）|t = 7.87 h · 10-13 22:02 UTC" tabindex="0"/>
+<circle class="dot s2" cx="423.5" cy="134.1" r="5" data-tip="AT V4 (tune-only) · 第 4 轮 d1 · 本轮最佳|独立验证 4.2099×|t = 7.89 h · 10-13 22:03 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="413.8" cy="152.7" r="4" data-tip="AT V4 (tune-only) · 第 4 轮 d2|独立验证 3.9286×|t = 7.67 h · 10-13 21:50 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="492.6" cy="125.0" r="4" data-tip="AT V4 (tune-only) · 第 5 轮 d0|独立验证 4.3480×|t = 9.40 h · 10-13 23:34 UTC" tabindex="0"/>
+<path class="x s2" d="M466.0,346 L474.0,354 M466.0,354 L474.0,346"/><circle class="hit" cx="470.0" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 5 轮 d1|补丁应用失败（记 0）|t = 8.91 h · 10-13 23:04 UTC" tabindex="0"/>
+<circle class="dot s2" cx="497.6" cy="122.9" r="5" data-tip="AT V4 (tune-only) · 第 5 轮 d2 · 本轮最佳|独立验证 4.3796×|t = 9.51 h · 10-13 23:41 UTC" tabindex="0"/>
+<circle class="dot s2" cx="568.2" cy="96.8" r="5" data-tip="AT V4 (tune-only) · 第 6 轮 d0 · 本轮最佳|独立验证 4.7761×|t = 11.06 h · 10-14 01:14 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="577.6" cy="117.5" r="4" data-tip="AT V4 (tune-only) · 第 6 轮 d1|独立验证 4.4627×|t = 11.27 h · 10-14 01:26 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="563.2" cy="113.9" r="4" data-tip="AT V4 (tune-only) · 第 6 轮 d2|独立验证 4.5174×|t = 10.95 h · 10-14 01:07 UTC" tabindex="0"/>
+<circle class="dot s2" cx="682.6" cy="61.7" r="5" data-tip="AT V4 (tune-only) · 第 7 轮 d0 · 本轮最佳|独立验证 5.3069×|t = 13.57 h · 10-14 03:44 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="682.5" cy="77.8" r="4" data-tip="AT V4 (tune-only) · 第 7 轮 d1|独立验证 5.0638×|t = 13.57 h · 10-14 03:44 UTC" tabindex="0"/>
+<path class="diamond s1" d="M855.3,37.6 L862.3,44.6 L855.3,51.6 L848.3,44.6 Z" data-tip="Official · Director 最终独立验证|加权 5.5664×|8 轮 · 预算 20/20 · t = 17.36 h · 10-13 21:28 UTC" tabindex="0"/>
+<text class="end-v" x="871.3" y="45.6">5.57×</text>
+<text class="end-n" x="871.3" y="59.6">Official · 17.4 h</text>
+<path class="diamond s2" d="M737.5,57.9 L744.5,64.9 L737.5,71.9 L730.5,64.9 Z" data-tip="AT V4 (tune-only) · Director 最终独立验证|加权 5.2592×|7 轮 · 预算 20/20 · t = 14.78 h · 10-14 04:56 UTC" tabindex="0"/>
+<line class="leader" x1="745.5" y1="64.9" x2="751.5" y2="74.6"/>
+<text class="end-v" x="753.5" y="75.6">5.26×</text>
+<text class="end-n" x="753.5" y="89.6">AT · 14.8 h</text>
+</svg>
+<h2>Decode · deepseek_v41_flash_csa2_decode_real</h2>
+<svg class="panel" viewBox="0 0 1080 416" role="img" aria-label="Decode · deepseek_v41_flash_csa2_decode_real">
+<rect class="shade" x="583.6" y="16" width="13.7" height="330"/>
+<text class="shade-t" x="601.3" y="28">断网</text>
+<line class="grid" x1="64" x2="930" y1="346.0" y2="346.0"/>
+<text class="tick" x="56" y="350.0" text-anchor="end">0.8×</text>
+<line class="base" x1="64" x2="930" y1="291.0" y2="291.0"/>
+<text class="tick" x="56" y="295.0" text-anchor="end">1×</text>
+<line class="grid" x1="64" x2="930" y1="236.0" y2="236.0"/>
+<text class="tick" x="56" y="240.0" text-anchor="end">1.2×</text>
+<line class="grid" x1="64" x2="930" y1="181.0" y2="181.0"/>
+<text class="tick" x="56" y="185.0" text-anchor="end">1.4×</text>
+<line class="grid" x1="64" x2="930" y1="126.0" y2="126.0"/>
+<text class="tick" x="56" y="130.0" text-anchor="end">1.6×</text>
+<line class="grid" x1="64" x2="930" y1="71.0" y2="71.0"/>
+<text class="tick" x="56" y="75.0" text-anchor="end">1.8×</text>
+<line class="grid" x1="64" x2="930" y1="16.0" y2="16.0"/>
+<text class="tick" x="56" y="20.0" text-anchor="end">2×</text>
+<line class="grid" x1="64.0" x2="64.0" y1="16" y2="346"/>
+<text class="tick" x="64.0" y="398" text-anchor="middle">0h</text>
+<line class="grid" x1="155.2" x2="155.2" y1="16" y2="346"/>
+<text class="tick" x="155.2" y="398" text-anchor="middle">2h</text>
+<line class="grid" x1="246.3" x2="246.3" y1="16" y2="346"/>
+<text class="tick" x="246.3" y="398" text-anchor="middle">4h</text>
+<line class="grid" x1="337.5" x2="337.5" y1="16" y2="346"/>
+<text class="tick" x="337.5" y="398" text-anchor="middle">6h</text>
+<line class="grid" x1="428.6" x2="428.6" y1="16" y2="346"/>
+<text class="tick" x="428.6" y="398" text-anchor="middle">8h</text>
+<line class="grid" x1="519.8" x2="519.8" y1="16" y2="346"/>
+<text class="tick" x="519.8" y="398" text-anchor="middle">10h</text>
+<line class="grid" x1="610.9" x2="610.9" y1="16" y2="346"/>
+<text class="tick" x="610.9" y="398" text-anchor="middle">12h</text>
+<line class="grid" x1="702.1" x2="702.1" y1="16" y2="346"/>
+<text class="tick" x="702.1" y="398" text-anchor="middle">14h</text>
+<line class="grid" x1="793.3" x2="793.3" y1="16" y2="346"/>
+<text class="tick" x="793.3" y="398" text-anchor="middle">16h</text>
+<line class="grid" x1="884.4" x2="884.4" y1="16" y2="346"/>
+<text class="tick" x="884.4" y="398" text-anchor="middle">18h</text>
+<text class="tick" x="56" y="354" text-anchor="end">失败</text>
+<line class="grid" x1="64" x2="930" y1="350" y2="350"/>
+<text class="axis-t" x="497.0" y="414" text-anchor="middle">距该 lane 启动的墙钟时间（小时，连续轴）</text>
+<line class="fan s1" x1="64.0" y1="291.0" x2="175.2" y2="278.4"/>
+<line class="fan s1" x1="64.0" y1="291.0" x2="175.7" y2="310.3"/>
+<line class="fan s1" x1="175.2" y1="278.4" x2="225.3" y2="195.0"/>
+<line class="fan s1" x1="175.2" y1="278.4" x2="224.1" y2="291.2"/>
+<line class="fan s1" x1="175.2" y1="278.4" x2="228.3" y2="208.4"/>
+<line class="fan s1" x1="225.3" y1="195.0" x2="286.5" y2="130.0"/>
+<line class="fan s1" x1="225.3" y1="195.0" x2="292.3" y2="154.0"/>
+<line class="fan s1" x1="225.3" y1="195.0" x2="312.2" y2="107.0"/>
+<line class="fan s1" x1="312.2" y1="107.0" x2="396.4" y2="38.9"/>
+<line class="fan s1" x1="396.4" y1="38.9" x2="463.2" y2="32.7"/>
+<path class="best s1" d="M64.0,291.0 L175.2,278.4 L225.3,195.0 L312.2,107.0 L396.4,38.9 L463.2,32.7 L505.9,36.4"/>
+<line class="fan s2" x1="64.0" y1="291.0" x2="157.5" y2="202.0"/>
+<line class="fan s2" x1="64.0" y1="291.0" x2="161.3" y2="321.1"/>
+<line class="fan s2" x1="64.0" y1="291.0" x2="159.5" y2="262.7"/>
+<line class="fan s2" x1="157.5" y1="202.0" x2="269.9" y2="173.0"/>
+<line class="fan s2" x1="157.5" y1="202.0" x2="250.6" y2="203.4"/>
+<line class="fan s2" x1="157.5" y1="202.0" x2="259.2" y2="216.0"/>
+<line class="fan s2" x1="269.9" y1="173.0" x2="323.3" y2="150.7"/>
+<line class="fan s2" x1="269.9" y1="173.0" x2="336.3" y2="133.6"/>
+<line class="fan s2" x1="269.9" y1="173.0" x2="337.9" y2="159.7"/>
+<line class="fan s2" x1="336.3" y1="133.6" x2="404.8" y2="106.2"/>
+<line class="fan s2" x1="336.3" y1="133.6" x2="397.2" y2="106.8"/>
+<line class="fan s2" x1="336.3" y1="133.6" x2="419.3" y2="107.9"/>
+<line class="fan s2" x1="404.8" y1="106.2" x2="490.8" y2="102.3"/>
+<line class="fan s2" x1="404.8" y1="106.2" x2="480.0" y2="100.6"/>
+<line class="fan s2" x1="480.0" y1="100.6" x2="561.6" y2="87.9"/>
+<line class="fan s2" x1="480.0" y1="100.6" x2="564.7" y2="87.6"/>
+<line class="fan s2" x1="564.7" y1="87.6" x2="685.2" y2="70.6"/>
+<line class="fan s2" x1="564.7" y1="87.6" x2="693.3" y2="71.9"/>
+<path class="best s2" d="M64.0,291.0 L157.5,202.0 L269.9,173.0 L336.3,133.6 L404.8,106.2 L480.0,100.6 L564.7,87.6 L685.2,70.6 L762.9,67.4"/>
+<circle class="dot s1" cx="175.2" cy="278.4" r="5" data-tip="Official · 第 1 轮 d0 · 本轮最佳|独立验证 1.0458×|t = 2.44 h · 10-13 06:32 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="175.7" cy="310.3" r="4" data-tip="Official · 第 1 轮 d1|独立验证 0.9297×（regression）|t = 2.45 h · 10-13 06:33 UTC" tabindex="0"/>
+<path class="x s1" d="M162.0,346 L170.0,354 M162.0,354 L170.0,346"/><circle class="hit" cx="166.0" cy="350" r="8" data-tip="Official · 第 1 轮 d2|补丁应用失败（记 0）|t = 2.24 h · 10-13 06:20 UTC" tabindex="0"/>
+<circle class="dot s1" cx="225.3" cy="195.0" r="5" data-tip="Official · 第 2 轮 d0 · 本轮最佳|独立验证 1.3490×|t = 3.54 h · 10-13 07:38 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="224.1" cy="291.2" r="4" data-tip="Official · 第 2 轮 d1|独立验证 0.9993×（regression）|t = 3.51 h · 10-13 07:37 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="228.3" cy="208.4" r="4" data-tip="Official · 第 2 轮 d2|独立验证 1.3003×|t = 3.60 h · 10-13 07:42 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="286.5" cy="130.0" r="4" data-tip="Official · 第 3 轮 d0|独立验证 1.5853×|t = 4.88 h · 10-13 08:59 UTC" tabindex="0"/>
+<circle class="dot s1 hollow" cx="292.3" cy="154.0" r="4" data-tip="Official · 第 3 轮 d1|独立验证 1.4981×|t = 5.01 h · 10-13 09:07 UTC" tabindex="0"/>
+<circle class="dot s1" cx="312.2" cy="107.0" r="5" data-tip="Official · 第 3 轮 d2 · 本轮最佳|独立验证 1.6692×|t = 5.45 h · 10-13 09:33 UTC" tabindex="0"/>
+<path class="x s1" d="M375.9,346 L383.9,354 M375.9,354 L383.9,346"/><circle class="hit" cx="379.9" cy="350" r="8" data-tip="Official · 第 4 轮 d0|补丁应用失败（记 0）|t = 6.93 h · 10-13 11:02 UTC" tabindex="0"/>
+<path class="x s1" d="M361.5,346 L369.5,354 M361.5,354 L369.5,346"/><circle class="hit" cx="365.5" cy="350" r="8" data-tip="Official · 第 4 轮 d1|补丁应用失败（记 0）|t = 6.61 h · 10-13 10:43 UTC" tabindex="0"/>
+<circle class="dot s1" cx="396.4" cy="38.9" r="5" data-tip="Official · 第 4 轮 d2 · 本轮最佳|独立验证 1.9167×|t = 7.29 h · 10-13 11:24 UTC" tabindex="0"/>
+<path class="x s1" d="M440.7,346 L448.7,354 M440.7,354 L448.7,346"/><circle class="hit" cx="444.7" cy="350" r="8" data-tip="Official · 第 5 轮 d0|补丁应用失败（记 0）|t = 8.35 h · 10-13 12:27 UTC" tabindex="0"/>
+<circle class="dot s1" cx="463.2" cy="32.7" r="5" data-tip="Official · 第 5 轮 d1 · 本轮最佳|独立验证 1.9392×|t = 8.76 h · 10-13 12:52 UTC" tabindex="0"/>
+<path class="x s1" d="M462.4,346 L470.4,354 M462.4,354 L470.4,346"/><circle class="hit" cx="466.4" cy="350" r="8" data-tip="Official · 第 5 轮 d2|补丁应用失败（记 0）|t = 8.83 h · 10-13 12:56 UTC" tabindex="0"/>
+<circle class="dot s2" cx="157.5" cy="202.0" r="5" data-tip="AT V4 (tune-only) · 第 1 轮 d0 · 本轮最佳|独立验证 1.3235×|t = 2.05 h · 10-13 16:13 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="161.3" cy="321.1" r="4" data-tip="AT V4 (tune-only) · 第 1 轮 d1|独立验证 0.8906×（regression）|t = 2.13 h · 10-13 16:18 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="159.5" cy="262.7" r="4" data-tip="AT V4 (tune-only) · 第 1 轮 d2|独立验证 1.1030×|t = 2.09 h · 10-13 16:15 UTC" tabindex="0"/>
+<circle class="dot s2" cx="269.9" cy="173.0" r="5" data-tip="AT V4 (tune-only) · 第 2 轮 d0 · 本轮最佳|独立验证 1.4291×|t = 4.52 h · 10-13 18:41 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="250.6" cy="203.4" r="4" data-tip="AT V4 (tune-only) · 第 2 轮 d1|独立验证 1.3185×|t = 4.09 h · 10-13 18:15 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="259.2" cy="216.0" r="4" data-tip="AT V4 (tune-only) · 第 2 轮 d2|独立验证 1.2729×|t = 4.28 h · 10-13 18:27 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="323.3" cy="150.7" r="4" data-tip="AT V4 (tune-only) · 第 3 轮 d0|独立验证 1.5102×|t = 5.69 h · 10-13 19:51 UTC" tabindex="0"/>
+<circle class="dot s2" cx="336.3" cy="133.6" r="5" data-tip="AT V4 (tune-only) · 第 3 轮 d1 · 本轮最佳|独立验证 1.5723×|t = 5.97 h · 10-13 20:08 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="337.9" cy="159.7" r="4" data-tip="AT V4 (tune-only) · 第 3 轮 d2|独立验证 1.4775×|t = 6.01 h · 10-13 20:10 UTC" tabindex="0"/>
+<circle class="dot s2" cx="404.8" cy="106.2" r="5" data-tip="AT V4 (tune-only) · 第 4 轮 d0 · 本轮最佳|独立验证 1.6720×|t = 7.48 h · 10-13 21:38 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="397.2" cy="106.8" r="4" data-tip="AT V4 (tune-only) · 第 4 轮 d1|独立验证 1.6700×|t = 7.31 h · 10-13 21:28 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="419.3" cy="107.9" r="4" data-tip="AT V4 (tune-only) · 第 4 轮 d2|独立验证 1.6660×|t = 7.79 h · 10-13 21:57 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="490.8" cy="102.3" r="4" data-tip="AT V4 (tune-only) · 第 5 轮 d0|独立验证 1.6862×|t = 9.36 h · 10-13 23:32 UTC" tabindex="0"/>
+<path class="x s2" d="M469.4,346 L477.4,354 M469.4,354 L477.4,346"/><circle class="hit" cx="473.4" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 5 轮 d1|补丁应用失败（记 0）|t = 8.98 h · 10-13 23:09 UTC" tabindex="0"/>
+<circle class="dot s2" cx="480.0" cy="100.6" r="5" data-tip="AT V4 (tune-only) · 第 5 轮 d2 · 本轮最佳|独立验证 1.6923×|t = 9.13 h · 10-13 23:17 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="561.6" cy="87.9" r="4" data-tip="AT V4 (tune-only) · 第 6 轮 d0|独立验证 1.7386×|t = 10.92 h · 10-14 01:05 UTC" tabindex="0"/>
+<path class="x s2" d="M572.5,346 L580.5,354 M572.5,354 L580.5,346"/><circle class="hit" cx="576.5" cy="350" r="8" data-tip="AT V4 (tune-only) · 第 6 轮 d1|补丁应用失败（记 0）|t = 11.24 h · 10-14 01:24 UTC" tabindex="0"/>
+<circle class="dot s2" cx="564.7" cy="87.6" r="5" data-tip="AT V4 (tune-only) · 第 6 轮 d2 · 本轮最佳|独立验证 1.7397×|t = 10.99 h · 10-14 01:09 UTC" tabindex="0"/>
+<circle class="dot s2" cx="685.2" cy="70.6" r="5" data-tip="AT V4 (tune-only) · 第 7 轮 d0 · 本轮最佳|独立验证 1.8014×|t = 13.63 h · 10-14 03:48 UTC" tabindex="0"/>
+<circle class="dot s2 hollow" cx="693.3" cy="71.9" r="4" data-tip="AT V4 (tune-only) · 第 7 轮 d1|独立验证 1.7968×|t = 13.81 h · 10-14 03:58 UTC" tabindex="0"/>
+<path class="diamond s1" d="M505.9,29.4 L512.9,36.4 L505.9,43.4 L498.9,36.4 Z" data-tip="Official · Director 最终独立验证|加权 1.9259×|5 轮 · 预算 15/20 · t = 9.69 h · 10-13 13:48 UTC" tabindex="0"/>
+<text class="end-v" x="521.9" y="37.4">1.93×</text>
+<text class="end-n" x="521.9" y="51.4">Official · 9.7 h</text>
+<path class="diamond s2" d="M762.9,60.4 L769.9,67.4 L762.9,74.4 L755.9,67.4 Z" data-tip="AT V4 (tune-only) · Director 最终独立验证|加权 1.8131×|7 轮 · 预算 20/20 · t = 15.33 h · 10-14 05:30 UTC" tabindex="0"/>
+<text class="end-v" x="778.9" y="68.4">1.81×</text>
+<text class="end-n" x="778.9" y="82.4">AT · 15.3 h</text>
+</svg>
+<p class="note">阴影：AT V4 已知中断（墙钟时间照常计入）。Prefill 4.6–5.7 h 为模型网关 429 额度错误后从检查点恢复；11.4–11.7 h 为用户侧断网导致 API 隧道中断约 18 分钟。Official lane 的 “(recovered)” 方向是运行时晚到结果，图中按其独立验证完成时刻绘制。Official Prefill 第 6–8 轮每轮只派 1 个 deep_explore 方向（每个占 2 个预算）。数据：timeline_data.json（agent 日志最后时间戳 + Director 验证文件 mtime）。</p>
+<details><summary>数据表（全部方向独立验证与 Director 最终值）</summary><table><thead><tr><th>算子</th><th>Lane</th><th>轮</th><th>方向</th><th>状态</th><th>独立验证加权</th><th>距启动 (h)</th><th>UTC</th></tr></thead><tbody>
+<tr><td>Prefill</td><td>Official</td><td>1</td><td>d0</td><td>verified</td><td>2.7086×</td><td>1.58</td><td>10-13 05:41</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>1</td><td>d2</td><td>verified</td><td>3.5002×</td><td>1.77</td><td>10-13 05:52</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>1</td><td>d1</td><td>verified</td><td>3.5326×</td><td>1.86</td><td>10-13 05:57</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>2</td><td>d2</td><td>verified</td><td>4.0965×</td><td>3.96</td><td>10-13 08:04</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>2</td><td>d0</td><td>verified</td><td>3.7848×</td><td>4.02</td><td>10-13 08:07</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>2</td><td>d1</td><td>verified</td><td>3.6934×</td><td>4.16</td><td>10-13 08:15</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>3</td><td>d2</td><td>apply_failed</td><td>0.0000×</td><td>6.92</td><td>10-13 11:01</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>3</td><td>d1</td><td>verified</td><td>4.4071×</td><td>7.22</td><td>10-13 11:19</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>3</td><td>d0</td><td>verified</td><td>4.1203×</td><td>7.26</td><td>10-13 11:22</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>4</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>10.12</td><td>10-13 14:13</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>4</td><td>d2</td><td>verified</td><td>4.7288×</td><td>10.29</td><td>10-13 14:23</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>4</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>10.43</td><td>10-13 14:32</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>5</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>11.44</td><td>10-13 15:32</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>5</td><td>d2</td><td>verified</td><td>4.6451×</td><td>11.74</td><td>10-13 15:50</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>5</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>11.81</td><td>10-13 15:54</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>6</td><td>d0</td><td>verified</td><td>4.7990×</td><td>13.15</td><td>10-13 17:15</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>7</td><td>d0</td><td>verified</td><td>5.3956×</td><td>15.08</td><td>10-13 19:11</td></tr>
+<tr><td>Prefill</td><td>Official</td><td>8</td><td>d0</td><td>verified</td><td>5.4737×</td><td>16.55</td><td>10-13 20:39</td></tr>
+<tr class="fin"><td>Prefill</td><td>Official</td><td colspan="3">Director 最终验证</td><td>5.5664×</td><td>17.36</td><td>10-13 21:28</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>1</td><td>d2</td><td>verified</td><td>2.6709×</td><td>1.61</td><td>10-13 15:46</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>1</td><td>d0</td><td>verified</td><td>2.2272×</td><td>1.72</td><td>10-13 15:53</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>1</td><td>d1</td><td>verified</td><td>2.7653×</td><td>1.74</td><td>10-13 15:54</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>2</td><td>d1</td><td>verified</td><td>3.7062×</td><td>3.59</td><td>10-13 17:45</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>2</td><td>d2</td><td>verified</td><td>3.4569×</td><td>3.80</td><td>10-13 17:58</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>2</td><td>d0</td><td>verified</td><td>3.2228×</td><td>4.02</td><td>10-13 18:11</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>3</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>6.24</td><td>10-13 20:24</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>3</td><td>d2</td><td>apply_failed</td><td>0.0000×</td><td>6.82</td><td>10-13 20:59</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>3</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>6.82</td><td>10-13 20:59</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>4</td><td>d2</td><td>verified</td><td>3.9286×</td><td>7.67</td><td>10-13 21:50</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>4</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>7.87</td><td>10-13 22:02</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>4</td><td>d1</td><td>verified</td><td>4.2099×</td><td>7.89</td><td>10-13 22:03</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>5</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>8.91</td><td>10-13 23:04</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>5</td><td>d0</td><td>verified</td><td>4.3480×</td><td>9.40</td><td>10-13 23:34</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>5</td><td>d2</td><td>verified</td><td>4.3796×</td><td>9.51</td><td>10-13 23:41</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>6</td><td>d2</td><td>verified</td><td>4.5174×</td><td>10.95</td><td>10-14 01:07</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>6</td><td>d0</td><td>verified</td><td>4.7761×</td><td>11.06</td><td>10-14 01:14</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>6</td><td>d1</td><td>verified</td><td>4.4627×</td><td>11.27</td><td>10-14 01:26</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>7</td><td>d1</td><td>verified</td><td>5.0638×</td><td>13.57</td><td>10-14 03:44</td></tr>
+<tr><td>Prefill</td><td>AT V4 (tune-only)</td><td>7</td><td>d0</td><td>verified</td><td>5.3069×</td><td>13.57</td><td>10-14 03:44</td></tr>
+<tr class="fin"><td>Prefill</td><td>AT V4 (tune-only)</td><td colspan="3">Director 最终验证</td><td>5.2592×</td><td>14.78</td><td>10-14 04:56</td></tr>
+<tr><td>Decode</td><td>Official</td><td>1</td><td>d2</td><td>apply_failed</td><td>0.0000×</td><td>2.24</td><td>10-13 06:20</td></tr>
+<tr><td>Decode</td><td>Official</td><td>1</td><td>d0</td><td>verified</td><td>1.0458×</td><td>2.44</td><td>10-13 06:32</td></tr>
+<tr><td>Decode</td><td>Official</td><td>1</td><td>d1</td><td>regression</td><td>0.9297×</td><td>2.45</td><td>10-13 06:33</td></tr>
+<tr><td>Decode</td><td>Official</td><td>2</td><td>d1</td><td>regression</td><td>0.9993×</td><td>3.51</td><td>10-13 07:37</td></tr>
+<tr><td>Decode</td><td>Official</td><td>2</td><td>d0</td><td>verified</td><td>1.3490×</td><td>3.54</td><td>10-13 07:38</td></tr>
+<tr><td>Decode</td><td>Official</td><td>2</td><td>d2</td><td>verified</td><td>1.3003×</td><td>3.60</td><td>10-13 07:42</td></tr>
+<tr><td>Decode</td><td>Official</td><td>3</td><td>d0</td><td>verified</td><td>1.5853×</td><td>4.88</td><td>10-13 08:59</td></tr>
+<tr><td>Decode</td><td>Official</td><td>3</td><td>d1</td><td>verified</td><td>1.4981×</td><td>5.01</td><td>10-13 09:07</td></tr>
+<tr><td>Decode</td><td>Official</td><td>3</td><td>d2</td><td>verified</td><td>1.6692×</td><td>5.45</td><td>10-13 09:33</td></tr>
+<tr><td>Decode</td><td>Official</td><td>4</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>6.61</td><td>10-13 10:43</td></tr>
+<tr><td>Decode</td><td>Official</td><td>4</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>6.93</td><td>10-13 11:02</td></tr>
+<tr><td>Decode</td><td>Official</td><td>4</td><td>d2</td><td>verified</td><td>1.9167×</td><td>7.29</td><td>10-13 11:24</td></tr>
+<tr><td>Decode</td><td>Official</td><td>5</td><td>d0</td><td>apply_failed</td><td>0.0000×</td><td>8.35</td><td>10-13 12:27</td></tr>
+<tr><td>Decode</td><td>Official</td><td>5</td><td>d1</td><td>verified</td><td>1.9392×</td><td>8.76</td><td>10-13 12:52</td></tr>
+<tr><td>Decode</td><td>Official</td><td>5</td><td>d2</td><td>apply_failed</td><td>0.0000×</td><td>8.83</td><td>10-13 12:56</td></tr>
+<tr class="fin"><td>Decode</td><td>Official</td><td colspan="3">Director 最终验证</td><td>1.9259×</td><td>9.69</td><td>10-13 13:48</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>1</td><td>d0</td><td>verified</td><td>1.3235×</td><td>2.05</td><td>10-13 16:13</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>1</td><td>d2</td><td>verified</td><td>1.1030×</td><td>2.09</td><td>10-13 16:15</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>1</td><td>d1</td><td>regression</td><td>0.8906×</td><td>2.13</td><td>10-13 16:18</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>2</td><td>d1</td><td>verified</td><td>1.3185×</td><td>4.09</td><td>10-13 18:15</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>2</td><td>d2</td><td>verified</td><td>1.2729×</td><td>4.28</td><td>10-13 18:27</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>2</td><td>d0</td><td>verified</td><td>1.4291×</td><td>4.52</td><td>10-13 18:41</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>3</td><td>d0</td><td>verified</td><td>1.5102×</td><td>5.69</td><td>10-13 19:51</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>3</td><td>d1</td><td>verified</td><td>1.5723×</td><td>5.97</td><td>10-13 20:08</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>3</td><td>d2</td><td>verified</td><td>1.4775×</td><td>6.01</td><td>10-13 20:10</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>4</td><td>d1</td><td>verified</td><td>1.6700×</td><td>7.31</td><td>10-13 21:28</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>4</td><td>d0</td><td>verified</td><td>1.6720×</td><td>7.48</td><td>10-13 21:38</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>4</td><td>d2</td><td>verified</td><td>1.6660×</td><td>7.79</td><td>10-13 21:57</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>5</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>8.98</td><td>10-13 23:09</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>5</td><td>d2</td><td>verified</td><td>1.6923×</td><td>9.13</td><td>10-13 23:17</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>5</td><td>d0</td><td>verified</td><td>1.6862×</td><td>9.36</td><td>10-13 23:32</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>6</td><td>d0</td><td>verified</td><td>1.7386×</td><td>10.92</td><td>10-14 01:05</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>6</td><td>d2</td><td>verified</td><td>1.7397×</td><td>10.99</td><td>10-14 01:09</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>6</td><td>d1</td><td>apply_failed</td><td>0.0000×</td><td>11.24</td><td>10-14 01:24</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>7</td><td>d0</td><td>verified</td><td>1.8014×</td><td>13.63</td><td>10-14 03:48</td></tr>
+<tr><td>Decode</td><td>AT V4 (tune-only)</td><td>7</td><td>d1</td><td>verified</td><td>1.7968×</td><td>13.81</td><td>10-14 03:58</td></tr>
+<tr class="fin"><td>Decode</td><td>AT V4 (tune-only)</td><td colspan="3">Director 最终验证</td><td>1.8131×</td><td>15.33</td><td>10-14 05:30</td></tr>
+</tbody></table></details><div id="tip"></div></div><script>
+const tip=document.getElementById('tip');
+function show(e,el){const [a,b,c]=el.dataset.tip.split('|');tip.innerHTML=`<b>${a}</b><br>${b}<br><span class="m">${c}</span>`;
+ tip.style.display='block';const r=el.getBoundingClientRect();let x=(e&&e.clientX)||r.right,y=(e&&e.clientY)||r.top;
+ tip.style.left=Math.min(x+14,innerWidth-tip.offsetWidth-8)+'px';tip.style.top=Math.max(8,y-tip.offsetHeight-10)+'px';}
+document.querySelectorAll('[data-tip]').forEach(el=>{el.addEventListener('mousemove',e=>show(e,el));
+ el.addEventListener('focus',()=>show(null,el));el.addEventListener('mouseleave',()=>tip.style.display='none');
+ el.addEventListener('blur',()=>tip.style.display='none');});
+</script></body></html>

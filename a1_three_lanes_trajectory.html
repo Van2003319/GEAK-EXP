@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>A1 attention prefill — 三条 lane 的搜索轨迹</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--v8:#eb6834;--v6:#2a78d6;--of:#7f56c9;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1040px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;--v8:#d95926;--v6:#3987e5;--of:#9d7be0}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--v8:#d95926;--v6:#3987e5;--of:#9d7be0}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.6}
+.lgd{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.swd{width:22px;height:0;border-top:3px dashed;box-sizing:border-box}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+.df{width:11px;height:11px;border-radius:50%}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;white-space:nowrap}
+.tt .m{color:var(--tm)}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+.pt{cursor:pointer}
+</style></head><body><div class="v">
+<h1>qwen3_8_attention_prefill_real（A1）：三条 lane 的搜索轨迹（横轴 = 真实耗时）</h1>
+<p class="sub" id="sub"></p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--v8)"></span>V8 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--v6)"></span>V6P5FQ 轮最好</span>
+ <span class="lg"><span class="swd" style="border-color:var(--of)"></span>official 轮最好（换算值）</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>regression</span>
+ <span class="lg"><span class="df" style="background:var(--ts)"></span>verified（超过本 lane 的基线）</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed</span>
+ <span class="lg"><span style="font-size:14px;color:var(--ts);line-height:1">◆</span>Director 终验</span>
+ <span class="lg"><span style="font-size:15px;color:var(--v8);line-height:1">★</span>guard 之后才产出、事后复核（未计入）</span>
+</div>
+<svg id="c" width="980" height="880" role="img" aria-label="三条 A1 lane 的 speedup 随耗时变化，及工程师运行区间"></svg>
+<div class="tt" id="tt"></div>
+<details><summary id="tsum">数据表</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">vs vLLM 0.31</th><th class="n">原始值（official 旧基线）</th><th>状态</th><th class="n">完成时刻</th><th class="n">guard 后多跑</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+① <b>两条 gpt-6.1-sol lane 都以"保留基线"结束</b>（配置相同，只差框架和 GPU）：V8 Director 1.003×（配对新测 0.9979×），V6P5FQ 0.9987×，final_patch 都是 0 字节。进入 verify 的 FlyDSL 候选全部慢于 vLLM 0.31 kernel：V6P5FQ 0.4074 → 0.5135 → 0.6453，一轮比一轮快但都没过 1.0；V8 只有 r2 拿到测量值 0.8270，r1、r3 在 60 分钟时磁盘上没有可交付补丁（apply_failed）。<br>
+② <b>V8 的 r3v12 是被 60 分钟 hung-agent guard 丢掉的</b>：第 3 轮工程师 4.17 h 撞到 guard，verify 4.18 h 判 apply_failed；但工程师没有被停止，4.23 h 写出 r3v12（GQA head 分组 + causal block 倒序调度），按 Director 流程事后独立复核两次 <b>1.386× / 1.392×，三个 case 全赢</b>，正确性 12 项 + 存储检查 132 项全过。原因是 <code>kernel_lane.js</code> 的 <code>agentT</code> 超时只把结果置为 null，不停止子代理；这段代码 V8 与 official 相同。底部色条：V8 的工程师在 guard 之后又跑了 9–87 分钟（r1 被运行时重拉 2 次，跑到 3.13 h，与第 2 轮整段重叠），V6P5FQ 只多 1–3 分钟。三条 lane 的工程师几乎都撞 guard（official 20 个 verify 中 18 个标为 recovered，两条 gpt lane 6/6），差别在于 guard 那一刻磁盘上有没有可用补丁。<br>
+③ <b>official 的点是换算值</b>：它的分母是 10/10 当时安装的旧版 vLLM kernel（<span id="oldb"></span> ms），比 10/27 的 vLLM 0.31 kernel（<span id="newb"></span> ms）慢约 <span id="slow"></span>×。几何平均可逐 case 相乘，所以每个 verified geomean × GM(新基线/旧基线) = × <span id="fac"></span> 就换算到 0.31 基线；Director 终验 <span id="ofraw"></span>× → <b><span id="ofconv"></span>×</b>（直接用它各 case 的绝对耗时 <span id="ofms"></span> ms 计算，结果相同）。这是跨日期、跨软件栈的绝对耗时比较，只能作参考：它的 kernel 依赖的 <code>flydsl.expr.buffer_ops</code> / <code>vector</code> 在 FlyDSL 0.3.4.1 中已不存在，无法在现在的容器里复测。<br>
+④ <b>三条线不是受控对比</b>：official 每轮最多 3 个方向并行（第 7 轮 2 个，每个占 1 格）、7 轮、20 格、21.8 h，模型 Opus 5 max；两条 gpt lane 每轮只有 1 个 deep_explore（占 2 格）、3 轮、6 格、4.5–5.5 h。按换算值，official 第 1 轮（2.97 h）就有一个方向超过 vLLM 0.31 kernel（1.075×），之后每轮继续上升；同一时段 V8 的 r3v12（4.23 h，1.39×）与 official 第 2–3 轮的水平相当，但没有进入结果。
+</p></div>
+<script>
+const DATA={"basis": "unweighted geomean speedup over the three captured cases vs the vLLM 0.31 prefix_prefill kernel (10/27); official values are converted from its own 10/10 baseline", "conversion": {"factor": 0.56027, "new_base_ms": {"T1024_first_prefill": 0.1835, "T8192_large_prefill": 0.6782, "T8192_prefix_prefill": 0.9921}, "old_base_ms": {"T1024_first_prefill": 0.2139, "T8192_large_prefill": 1.4811, "T8192_prefix_prefill": 2.2154}, "official_final_ms": {"T1024_first_prefill": 0.1106, "T8192_large_prefill": 0.4239, "T8192_prefix_prefill": 0.4314}, "official_final_converted": 1.8272}, "posthoc_r3v12": {"h": 4.2302, "runs": [1.3859, 1.3918], "cases": {"T1024_first_prefill": [1.377, 1.3869], "T8192_large_prefill": [1.1797, 1.1623], "T8192_prefix_prefill": [1.6386, 1.6724]}, "engineer_full": 1.4054, "correctness_checks": 12, "storage_checks": 132}, "lanes": [{"name": "V8", "model": "gpt-6.1-sol medium", "gpus": "HIP 5,6,7", "key": "v8", "started_at": "2026-10-27T01:55:26.456234+00:00", "duration_h": 4.4757, "rounds": 3, "budget": "6/6", "stopped_by": "budget", "converted": false, "final": {"geo": 1.003, "raw": null, "h": 4.4527, "status": "accepted", "paired": 0.9979}, "directions": [{"id": "r1_d0", "round": 1, "spec": "deep_explore", "strategy": "resource-efficient FlyDSL prefix-prefill 重写（预期 2.5×）；本地最好 smoke 0.745×，best_patch.diff 为空", "status": "apply_failed", "geo": null, "raw": null, "done_h": 1.7495, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 0.6846, "guard_h": 1.6846, "end_h": 3.1327, "retries": 2}}, {"id": "r2_d0", "round": 2, "spec": "deep_explore", "strategy": "原生布局 online softmax：8 wave、48-key tile、K/V 行优先 LDS（预期 2×）", "status": "regression", "geo": 0.827, "raw": null, "done_h": 3.029, "self": 0.8138, "full_runs": null, "recovered": true, "eng": {"start_h": 1.8207, "guard_h": 2.8207, "end_h": 2.9715, "retries": 0}}, {"id": "r3_d0", "round": 3, "spec": "deep_explore", "strategy": "chained-MFMA / dataflow 重设计 + compiled eager dispatch + next-tile prefetch（预期 2×）；guard 时磁盘上没有交付物", "status": "apply_failed", "geo": null, "raw": null, "done_h": 4.1754, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 3.1676, "guard_h": 4.1676, "end_h": 4.469, "retries": 0}}], "t0_iso": "2026-10-27T01:55:26.456234+00:00"}, {"name": "V6P5FQ", "model": "gpt-6.1-sol medium", "gpus": "HIP 0,1,2", "key": "v6", "started_at": "2026-10-26T23:37:11.447747+00:00", "duration_h": 5.4864, "rounds": 3, "budget": "6/6", "stopped_by": "budget", "converted": false, "final": {"geo": 0.9987, "raw": null, "h": 5.4674, "status": "accepted", "paired": null}, "directions": [{"id": "r1_d0", "round": 1, "spec": "deep_explore", "strategy": "独立融合 FlyDSL：BM128/BN32、4 wave、反向 grid（预期 2.5×）", "status": "regression", "geo": 0.4074, "raw": null, "done_h": 2.2932, "self": 0.413, "full_runs": [0.4064, 0.4078], "recovered": true, "eng": {"start_h": 1.0454, "guard_h": 2.0454, "end_h": 2.0916, "retries": 0}}, {"id": "r2_d0", "round": 2, "spec": "deep_explore", "strategy": "BM64/BN32 MFMA16、每 wave 16 行 query、swizzled LDS 协同加载 K/V、FP32 online softmax（预期 2×）", "status": "regression", "geo": 0.5135, "raw": null, "done_h": 3.6168, "self": 0.5172, "full_runs": [0.5126, 0.5133], "recovered": true, "eng": {"start_h": 2.3575, "guard_h": 3.3575, "end_h": 3.3703, "retries": 0}}, {"id": "r3_d0", "round": 3, "spec": "deep_explore", "strategy": "BM128/BN32 MFMA32、每 wave 32 行 query、swizzled LDS、finite-value RNE BF16 转换（预期 2×）", "status": "regression", "geo": 0.6453, "raw": null, "done_h": 4.9915, "self": 0.6452, "full_runs": [0.6451, 0.6467], "recovered": true, "eng": {"start_h": 3.7076, "guard_h": 4.7076, "end_h": 4.7384, "retries": 2}}], "t0_iso": "2026-10-26T23:37:11.447747+00:00"}, {"key": "of", "name": "official", "model": "Claude Opus 5 max（claude-opus-5[1m]）", "gpus": "GPU 0,1", "started_at": "2026-10-10T17:22:12.510849+00:00", "duration_h": 21.8414, "rounds": 7, "budget": "20/20", "stopped_by": "budget", "converted": true, "final": {"geo": 1.8272, "raw": 3.2613, "h": 21.7162, "status": "accepted", "paired": null}, "directions": [{"id": "r1_d1", "round": 1, "spec": "memory", "strategy": null, "status": "verified", "geo": 0.6175, "raw": 1.1022, "done_h": 2.4861, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 1.099, "guard_h": 2.099, "end_h": 3.2903, "retries": 0}}, {"id": "r1_d0", "round": 1, "spec": "algorithm", "strategy": null, "status": "verified", "geo": 0.8097, "raw": 1.4452, "done_h": 2.5912, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 1.099, "guard_h": 2.099, "end_h": 3.2962, "retries": 0}}, {"id": "r1_d2", "round": 1, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.0755, "raw": 1.9196, "done_h": 2.9698, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 1.099, "guard_h": 2.099, "end_h": 3.1292, "retries": 0}}, {"id": "r2_d0", "round": 2, "spec": "memory", "strategy": null, "status": "verified", "geo": 1.1913, "raw": 2.1263, "done_h": 5.8969, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 4.4925, "guard_h": 5.4925, "end_h": 6.2696, "retries": 0}}, {"id": "r2_d2", "round": 2, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.3568, "raw": 2.4217, "done_h": 5.9645, "self": null, "full_runs": null, "recovered": false, "eng": {"start_h": 4.4925, "guard_h": 5.4925, "end_h": 5.4913, "retries": 0}}, {"id": "r2_d1", "round": 2, "spec": "algorithm", "strategy": null, "status": "verified", "geo": 1.2446, "raw": 2.2215, "done_h": 6.0912, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 4.4925, "guard_h": 5.4925, "end_h": 7.1185, "retries": 0}}, {"id": "r3_d1", "round": 3, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.3998, "raw": 2.4985, "done_h": 9.1245, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 7.4172, "guard_h": 8.4172, "end_h": 9.4487, "retries": 0}}, {"id": "r3_d2", "round": 3, "spec": "host_runtime", "strategy": null, "status": "verified", "geo": 1.3846, "raw": 2.4713, "done_h": 9.2097, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 7.4172, "guard_h": 8.4172, "end_h": 8.7772, "retries": 0}}, {"id": "r3_d0", "round": 3, "spec": "memory", "strategy": null, "status": "verified", "geo": 1.2074, "raw": 2.155, "done_h": 9.2721, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 7.4172, "guard_h": 8.4172, "end_h": 8.9902, "retries": 0}}, {"id": "r4_d1", "round": 4, "spec": "memory", "strategy": null, "status": "verified", "geo": 1.4947, "raw": 2.6679, "done_h": 11.4814, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 10.1408, "guard_h": 11.1408, "end_h": 11.1424, "retries": 0}}, {"id": "r4_d2", "round": 4, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.5045, "raw": 2.6853, "done_h": 11.5435, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 10.1408, "guard_h": 11.1408, "end_h": 11.6309, "retries": 0}}, {"id": "r4_d0", "round": 4, "spec": "algorithm", "strategy": null, "status": "verified", "geo": 1.4925, "raw": 2.6638, "done_h": 11.8929, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 10.1408, "guard_h": 11.1408, "end_h": 11.7264, "retries": 0}}, {"id": "r5_d2", "round": 5, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.5927, "raw": 2.8427, "done_h": 14.1032, "self": null, "full_runs": null, "recovered": false, "eng": {"start_h": 13.0231, "guard_h": 14.0231, "end_h": 13.7685, "retries": 0}}, {"id": "r5_d1", "round": 5, "spec": "memory", "strategy": null, "status": "verified", "geo": 1.5324, "raw": 2.7352, "done_h": 14.3157, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 13.0231, "guard_h": 14.0231, "end_h": 15.4784, "retries": 0}}, {"id": "r5_d0", "round": 5, "spec": "algorithm", "strategy": null, "status": "verified", "geo": 1.7648, "raw": 3.1499, "done_h": 14.3849, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 13.0231, "guard_h": 14.0231, "end_h": 14.4352, "retries": 0}}, {"id": "r6_d0", "round": 6, "spec": "algorithm", "strategy": null, "status": "apply_failed", "geo": null, "raw": null, "done_h": 16.4213, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 15.5178, "guard_h": 16.5178, "end_h": 16.3909, "retries": 0}}, {"id": "r6_d1", "round": 6, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.6618, "raw": 2.9661, "done_h": 16.8909, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 15.5178, "guard_h": 16.5178, "end_h": 19.9178, "retries": 0}}, {"id": "r6_d2", "round": 6, "spec": "memory", "strategy": null, "status": "verified", "geo": 1.8304, "raw": 3.2671, "done_h": 17.0714, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 15.5178, "guard_h": 16.5178, "end_h": 17.2787, "retries": 0}}, {"id": "r7_d1", "round": 7, "spec": "memory", "strategy": null, "status": "apply_failed", "geo": null, "raw": null, "done_h": 20.4321, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 19.0008, "guard_h": 20.0008, "end_h": 20.8621, "retries": 0}}, {"id": "r7_d0", "round": 7, "spec": "compute", "strategy": null, "status": "verified", "geo": 1.8018, "raw": 3.2159, "done_h": 20.9315, "self": null, "full_runs": null, "recovered": true, "eng": {"start_h": 19.0008, "guard_h": 20.0008, "end_h": 20.6972, "retries": 0}}]}]};
+const L=DATA.lanes, CV=DATA.conversion, PH=DATA.posthoc_r3v12;
+const C={v8:"var(--v8)",v6:"var(--v6)",of:"var(--of)"};
+const NM={v8:"V8",v6:"V6P5FQ",of:"official（Opus 5）"};
+const CASES=["T1024_first_prefill","T8192_large_prefill","T8192_prefix_prefill"];
+const W=980,ML=62,MR=150,iw=W-ML-MR;
+const PA={top:84,h:240,t1:22,lo:0.3,hi:2.0,ticksY:[0.4,0.6,0.8,1.0,1.2,1.4,1.6,1.8,2.0],ticksX:[0,2,4,6,8,10,12,14,16,18,20,22]};
+const PB={top:PA.top+PA.h+112,h:250,t1:6.5,lo:0.35,hi:1.45,ticksY:[0.4,0.6,0.8,1.0,1.2,1.4],ticksX:[0,1,2,3,4,5,6]};
+const STRIP=PB.top+PB.h+80, ROWH=19;
+const NS="http://www.w3.org/2000/svg", svg=document.getElementById("c");
+const E=(n,a,t,p)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined&&t!==null)e.textContent=t;(p||svg).appendChild(e);return e;};
+const X=(P,h)=>ML+h/P.t1*iw;
+const Y=(P,g)=>P.top+P.h-(Math.min(Math.max(g,P.lo),P.hi)-P.lo)/(P.hi-P.lo)*P.h;
+const inY=(P,g)=>g>=P.lo&&g<=P.hi, inX=(P,h)=>h>=0&&h<=P.t1;
+const f4=x=>x.toFixed(4), f3=x=>x.toFixed(3);
+const fmtDur=h=>{const m=Math.round(h*60);return Math.floor(m/60)+"h"+String(m%60).padStart(2,"0")+"m";};
+const clock=(lane,h)=>{const d=new Date(Date.parse(lane.started_at)+h*3.6e6).toISOString();
+ return d.slice(5,7)+"/"+d.slice(8,10)+" "+d.slice(11,16)+"Z";};
+const valTxt=(l,g)=>l.converted?"≈"+f3(g):f4(g);
+
+// subtitle
+const sub=document.getElementById("sub");
+sub.innerHTML="纵轴 = 三个 case 的 verified geomean，分母统一为 <b>vLLM 0.31 prefix_prefill kernel（10/27）</b>；official 的点由它 10/10 的旧基线<b>换算</b>而来（见注 ③）。"+
+ "每点 = 一个 engineer 方向经 verify 独立复测的值；细线把同一轮的方向连成一组，粗线顺着每轮最好的方向延续。<br>"+
+ L.map(l=>`<b style="color:${C[l.key]}">${l.name}</b>：${l.model} · budget ${l.budget.split("/")[1]} · ${l.gpus} · ${clock(l,0)} 起 · `+
+  `<b>${l.rounds} 轮 / ${l.budget.split("/")[0]} 格 / ${fmtDur(l.duration_h)}，预算耗尽，`+
+  (l.converted?`Director ${l.final.raw.toFixed(4)}×（旧基线）≈ ${f3(l.final.geo)}×（换算）`:
+   `Director 保留基线 ${l.final.geo.toFixed(4)}×`+(l.final.paired?`（配对 ${l.final.paired.toFixed(4)}×）`:""))+"</b>").join("<br>");
+const fm=o=>CASES.map(c=>o[c].toFixed(4)).join(" / ");
+document.getElementById("oldb").textContent=fm(CV.old_base_ms);
+document.getElementById("newb").textContent=fm(CV.new_base_ms);
+document.getElementById("slow").textContent=(1/CV.factor).toFixed(2);
+document.getElementById("fac").textContent=CV.factor.toFixed(4);
+document.getElementById("ofraw").textContent=L[2].final.raw.toFixed(4);
+document.getElementById("ofconv").textContent=f3(CV.official_final_converted);
+document.getElementById("ofms").textContent=fm(CV.official_final_ms);
+
+// tooltip
+const tt=document.getElementById("tt");
+const hook=(e,html)=>{e.addEventListener("mouseenter",()=>{tt.innerHTML=html;tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{const w=tt.offsetWidth,right=ev.clientX+15+w>window.innerWidth-8;
+  tt.style.left=(right?Math.max(8,ev.clientX-15-w):ev.clientX+15)+"px";tt.style.top=(ev.clientY-14)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+const after=d=>Math.max(0,(d.eng.end_h-d.eng.guard_h)*60);
+const engTxt=(l,d)=>`工程师 ${d.eng.start_h.toFixed(2)}h 启动 → ${d.eng.guard_h.toFixed(2)}h 60 分钟 guard → ${d.eng.end_h.toFixed(2)}h 实际结束`+
+ (d.eng.end_h>d.eng.guard_h?`（guard 后 ${Math.round(after(d))} 分钟`+(d.eng.retries?`，运行时重拉 ${d.eng.retries} 次`:"")+"）":"（guard 前已返回）");
+const tipDir=(l,d)=>`<b>${NM[l.key]} · ${d.id}</b><br>specialty: ${d.spec}`+(d.strategy?`<br>策略: ${d.strategy}`:"")+
+ `<br>verified geomean: <b>${d.geo===null?"—":valTxt(l,d.geo)}</b>`+(d.geo===null?"":"（相对 vLLM 0.31"+(l.converted?"，换算值）":"）"))+
+ (l.converted&&d.raw?`<br>原始值: ${d.raw.toFixed(4)}×（相对 10/10 旧基线）`:"")+
+ (d.full_runs?`<br>两份独立完整报告: ${d.full_runs.map(f4).join(" / ")}`:"")+
+ (d.self?`<br>工程师自报: ${f4(d.self)}`:"")+
+ `<br><span class="m">${d.status} · round ${d.round} · 完成于 ${d.done_h.toFixed(2)}h（${clock(l,d.done_h)}）</span>`+
+ `<br><span class="m">${engTxt(l,d)}</span>`;
+const tipFinal=l=>`<b>${NM[l.key]} · Director 终验</b><br>${l.final.status}`+
+ (l.converted?`<br>≈ <b>${f3(l.final.geo)}×</b>（换算到 vLLM 0.31）<br>原始 ${l.final.raw.toFixed(4)}×（相对 10/10 旧基线）`:
+  `<br><b>${l.final.geo.toFixed(4)}×</b>（保留基线，final_patch 0 字节）`+(l.final.paired?`<br>配对新测 ${l.final.paired.toFixed(4)}×`:""))+
+ `<br><span class="m">完成于 ${l.final.h.toFixed(2)}h（${clock(l,l.final.h)}）</span>`;
+const tipPost=()=>`<b>V8 · r3v12（第 3 轮 guard 之后产出）</b><br>事后独立复核两次: <b>${PH.runs.map(f4).join(" / ")}</b>`+
+ CASES.map(c=>`<br><span class="m">${c}: ${PH.cases[c].map(x=>x.toFixed(3)).join(" / ")}</span>`).join("")+
+ `<br>工程师自测完整 3 对: ${f4(PH.engineer_full)}<br>正确性 ${PH.correctness_checks} 项、存储检查 ${PH.storage_checks} 项全过`+
+ `<br><span class="m">r3v12.py 写出于 ${PH.h.toFixed(2)}h（${clock(L[0],PH.h)}）；workflow 已在 4.18h 判 apply_failed，未计入</span>`;
+
+// stars and diamonds
+const star=(cx,cy,r)=>{let p="";for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?r*0.45:r;
+ p+=(i?"L":"M")+(cx+rr*Math.cos(a)).toFixed(1)+","+(cy+rr*Math.sin(a)).toFixed(1);}return p+"Z";};
+const diamond=(cx,cy,r)=>`M${cx},${cy-r}L${cx+r},${cy}L${cx},${cy+r}L${cx-r},${cy}Z`;
+
+function frame(P,title,shade){
+ if(shade)E("rect",{x:ML,y:P.top,width:X(P,6.5)-ML,height:P.h,fill:"var(--s2)"});
+ P.ticksY.forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:Y(P,g),y2:Y(P,g),stroke:"var(--grid)"});
+  E("text",{x:ML-11,y:Y(P,g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(1));});
+ P.ticksX.forEach(h=>{E("line",{x1:X(P,h),x2:X(P,h),y1:P.top,y2:P.top+P.h,stroke:"var(--grid)"});
+  E("text",{x:X(P,h),y:P.top+P.h+38,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h");});
+ E("line",{x1:ML,x2:ML+iw,y1:Y(P,1),y2:Y(P,1),stroke:"var(--ts)","stroke-width":1.5});
+ E("text",{x:ML+iw+9,y:Y(P,1)+4,"font-size":11.5,fill:"var(--ts)",class:"st"},"1.000 vLLM 0.31 平价");
+ E("line",{x1:ML,x2:ML+iw,y1:P.top+P.h,y2:P.top+P.h,stroke:"var(--axis)"});
+ E("text",{x:ML,y:P.top-14,"font-size":11.5,"font-weight":600,fill:"var(--ts)",class:"st"},title);
+ E("text",{x:ML-11,y:P.top+P.h+20,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值");
+ E("line",{x1:ML,x2:ML+iw,y1:P.top+P.h+15,y2:P.top+P.h+15,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+}
+frame(PA,"全程 0–22 h",true);
+E("text",{x:X(PA,6.5)+6,y:PA.top+14,"font-size":10.5,fill:"var(--tm)",class:"st"},"← 阴影 = 前 6.5 h，下方放大");
+E("text",{x:ML-11,y:PA.top-30,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup");
+frame(PB,"放大：前 6.5 h（0.35–1.45×）",false);
+const clip=E("clipPath",{id:"clipB"});E("rect",{x:ML,y:PB.top-30,width:iw,height:PB.h+60},null,clip);
+const gB=E("g",{"clip-path":"url(#clipB)"});
+
+// Greedy label placement: each label takes the first candidate offset that stays inside its band and
+// overlaps neither a mark nor an already placed label of the same panel.
+const bb=e=>{const b=e.getBBox();return {x1:b.x,y1:b.y,x2:b.x+b.width,y2:b.y+b.height};};
+const hits=(a,list)=>list.some(c=>a.x1<c.x2+1&&a.x2>c.x1-1&&a.y1<c.y2+1&&a.y2>c.y1-1);
+const ABOVE=[[0,-11,"middle"],[9,-8,"start"],[-9,-8,"end"],[11,4,"start"],[-11,4,"end"],[0,19,"middle"],[9,16,"start"],[-9,16,"end"]];
+const BELOW=[[0,19,"middle"],[9,16,"start"],[-9,16,"end"],[11,4,"start"],[-11,4,"end"],[0,-11,"middle"],[9,-8,"start"],[-9,-8,"end"]];
+const LEFT=[[-11,4,"end"],[-9,16,"end"],[-9,-8,"end"],[0,19,"middle"],[11,4,"start"],[0,-11,"middle"]];
+const RIGHT=[[11,4,"start"],[9,-8,"start"],[9,16,"start"],[-11,4,"end"],[0,-11,"middle"],[0,19,"middle"]];
+function placer(P,parent){
+ const taken=[];
+ return {
+  block(e){taken.push(bb(e));},
+  put(x,y,text,col,cands,band,attrs){
+   const e=E("text",Object.assign({"font-size":10.5,"font-weight":600,fill:col},attrs||{}),text,parent);
+   const lo=band?band[0]:P.top-26, hi=band?band[1]:P.top+P.h-1;
+   const at=c=>{e.setAttribute("x",x+c[0]);e.setAttribute("y",y+c[1]);e.setAttribute("text-anchor",c[2]);return bb(e);};
+   for(const c of cands){const b=at(c);if(b.x1>=ML-4&&b.x2<=W-2&&b.y1>=lo&&b.y2<=hi&&!hits(b,taken)){taken.push(b);return e;}}
+   taken.push(at(cands[0]));return e;}};
+}
+
+function lanePlot(P,g,detail){
+ const tag=detail?"B":"A", pl=placer(P,g), labels=[];
+ L.forEach(l=>{
+  const col=C[l.key], ok=l.directions.filter(d=>d.geo!==null);
+  const rounds=[...new Set(l.directions.map(d=>d.round))].sort((a,b)=>a-b);
+  rounds.forEach(r=>{const c=ok.filter(d=>d.round===r).sort((a,b)=>a.done_h-b.done_h);
+   if(c.length>1)E("polyline",{points:c.map(d=>X(P,d.done_h)+","+Y(P,d.geo)).join(" "),fill:"none",stroke:col,
+    "stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"},null,g);});
+  const best=rounds.map(r=>{const c=ok.filter(d=>d.round===r);return c.length?c.reduce((m,x)=>x.geo>m.geo?x:m):null;}).filter(Boolean);
+  if(best.length>1)E("polyline",{points:best.map(p=>X(P,p.done_h)+","+Y(P,p.geo)).join(" "),fill:"none",stroke:col,
+   "stroke-width":2.5,"stroke-dasharray":l.converted?"7 4":"none","stroke-linejoin":"round","stroke-linecap":"round"},null,g);
+  const labelled=detail||l.key==="of", pref=l.key==="v6"?BELOW:ABOVE;
+  l.directions.forEach(d=>{let e;
+   const dk=`${l.key}-${d.id}-${tag}`, single=l.directions.filter(x=>x.round===d.round).length===1;
+   if(d.geo===null){if(!inX(P,d.done_h))return;
+    e=E("text",{x:X(P,d.done_h),y:P.top+P.h+20,"text-anchor":"middle","font-size":15,fill:col,class:"pt","data-k":dk},"✕",g);
+    if(detail&&single)labels.push([5,X(P,d.done_h),P.top+P.h+15,"r"+d.round,col,RIGHT,[P.top+P.h+2,P.top+P.h+26],{"font-size":10}]);}
+   else{const filled=d.status==="verified";
+    e=E("circle",{cx:X(P,d.done_h),cy:Y(P,d.geo),r:5,fill:filled?col:"var(--s1)",stroke:col,"stroke-width":2.5,class:"pt","data-k":dk},null,g);
+    if(labelled&&single&&inX(P,d.done_h))labels.push([3,X(P,d.done_h),Y(P,d.geo),"r"+d.round+" "+valTxt(l,d.geo),col,pref]);}
+   hook(e,tipDir(l,d));});
+  if(labelled)rounds.forEach(r=>{const c=ok.filter(d=>d.round===r).sort((a,b)=>a.done_h-b.done_h);
+   if(c.length<2)return;const b=best.find(p=>p.round===r);
+   if(inX(P,b.done_h))labels.push([3,X(P,b.done_h),Y(P,b.geo),valTxt(l,b.geo),col,pref]);
+   if(inX(P,c[0].done_h))labels.push([4,X(P,c[0].done_h),Y(P,c[0].geo),"r"+r,col,LEFT,null,{opacity:.8}]);});
+  const f=l.final, fx=X(P,f.h), fy=Y(P,f.geo);
+  if(inX(P,f.h)){const e=E("path",{d:diamond(fx,fy,7),fill:col,stroke:"var(--s1)","stroke-width":1.5,class:"pt","data-k":`${l.key}-final-${tag}`},null,g);hook(e,tipFinal(l));
+   if(labelled)labels.push([1,fx,fy,"终验 "+(l.converted?"≈"+f3(f.geo):f3(f.geo))+"×",col,{v6:BELOW,v8:ABOVE,of:RIGHT}[l.key]]);}
+ });
+ const sx=X(P,PH.h), sy=Y(P,(PH.runs[0]+PH.runs[1])/2);
+ const s=E("path",{d:star(sx,sy,detail?9:7),fill:"var(--v8)",stroke:"var(--s1)","stroke-width":1,class:"pt","data-k":"r3v12-"+tag},null,g);hook(s,tipPost());
+ if(detail)labels.push([2,sx,sy,"r3v12 "+PH.runs[0].toFixed(3)+"–"+PH.runs[1].toFixed(3)+"×（事后复核，未计入）","var(--v8)",LEFT]);
+ [...(g===svg?svg:g).querySelectorAll(".pt"),...svg.querySelectorAll("text.st")].forEach(e=>pl.block(e));
+ labels.sort((a,b)=>a[0]-b[0]).forEach(a=>pl.put(a[1],a[2],a[3],a[4],a[5],a[6],a[7]));
+ return pl;
+}
+const plA=lanePlot(PA,svg,false);
+const plB=lanePlot(PB,gB,true);
+
+// engineer strip (panel B time axis)
+E("text",{x:ML,y:STRIP-12,"font-size":11.5,"font-weight":600,fill:"var(--ts)"},"工程师运行区间：实线 = 60 分钟 guard 之内，虚线 = guard 之后仍在运行");
+L.forEach((l,i)=>{const y0=STRIP+i*ROWH;
+ E("text",{x:ML-11,y:y0+10,"text-anchor":"end","font-size":11,fill:C[l.key]},l.name);
+ E("line",{x1:ML,x2:ML+iw,y1:y0+ROWH-3,y2:y0+ROWH-3,stroke:"var(--grid)"});
+ const byRound={};l.directions.forEach(d=>{(byRound[d.round]=byRound[d.round]||[]).push(d);});
+ Object.keys(byRound).forEach(r=>{const ds=byRound[r];
+  const s=Math.min(...ds.map(d=>d.eng.start_h)), gd=Math.min(...ds.map(d=>d.eng.guard_h)), en=Math.max(...ds.map(d=>d.eng.end_h));
+  if(s>PB.t1)return;
+  const yy=y0+3+((r-1)%3)*5, x0=X(PB,s), xg=X(PB,Math.min(gd,en,PB.t1)), xe=X(PB,Math.min(en,PB.t1));
+  const tip=`<b>${NM[l.key]} · 第 ${r} 轮工程师</b>`+ds.map(d=>`<br><span class="m">${d.id}: ${engTxt(l,d)}</span>`).join("");
+  const a=E("line",{x1:x0,x2:xg,y1:yy,y2:yy,stroke:C[l.key],"stroke-width":3.5,"stroke-linecap":"butt",class:"pt","data-k":`${l.key}-eng-r${r}`});hook(a,tip);
+  if(en>gd){const b=E("line",{x1:X(PB,Math.min(gd,PB.t1)),x2:xe,y1:yy,y2:yy,stroke:C[l.key],"stroke-width":3.5,"stroke-dasharray":"3 3",opacity:.75,class:"pt"});hook(b,tip);}
+ });
+});
+PB.ticksX.forEach(h=>E("line",{x1:X(PB,h),x2:X(PB,h),y1:STRIP-4,y2:STRIP+3*ROWH-3,stroke:"var(--grid)",opacity:.6}));
+E("text",{x:ML+iw,y:STRIP+3*ROWH+18,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自各 lane 启动的小时数");
+{const b=svg.getBBox();svg.setAttribute("height",Math.ceil(b.y+b.height+10));}
+
+// table
+const tb=document.querySelector("#t tbody");let nrow=0;
+const row=cells=>{const tr=document.createElement("tr");tr.innerHTML=cells.map(([v,n])=>`<td${n?' class="n"':""}>${v}</td>`).join("");tb.appendChild(tr);nrow++;};
+L.forEach(l=>{
+ l.directions.slice().sort((a,b)=>a.done_h-b.done_h).forEach(d=>row([[l.name],[d.id],[d.round,1],[d.spec],
+  [d.geo===null?"—":valTxt(l,d.geo),1],[l.converted&&d.raw?d.raw.toFixed(4):"",1],[d.status],[d.done_h.toFixed(2)+"h",1],
+  [d.eng.end_h>d.eng.guard_h?Math.round(after(d))+" min":"—",1]]));
+ if(l.key==="v8")row([[l.name],["r3v12"],[3,1],["deep_explore"],[PH.runs.map(f4).join(" / "),1],["",1],["事后复核（未计入）"],[PH.h.toFixed(2)+"h",1],["",1]]);
+ row([[l.name],["终验"],["",1],["director"],[l.converted?"≈"+f3(l.final.geo):l.final.geo.toFixed(4),1],[l.converted?l.final.raw.toFixed(4):"",1],
+  [l.final.status],[l.final.h.toFixed(2)+"h",1],["",1]]);
+});
+document.getElementById("tsum").textContent=`数据表（${L.reduce((s,l)=>s+l.directions.length,0)} 个方向 + r3v12 + 3 次终验）`;
+</script></body></html>

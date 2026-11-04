@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>FP8 GEMM — 三条 lane 的搜索轨迹</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--v6:#eb6834;--o1:#2a78d6;--o2:#8b5cf6;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1040px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;--v6:#d95926;--o1:#3987e5;--o2:#a78bfa}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--v6:#d95926;--o1:#3987e5;--o2:#a78bfa}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.55}
+.lgd{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.sw3{width:22px;height:0;border-top:2.5px dashed var(--ts)}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+.df{width:11px;height:11px;border-radius:50%}
+.dm{width:9px;height:9px;transform:rotate(45deg);box-sizing:border-box;margin:0 1px;background:var(--s1)}
+.sq{width:10px;height:10px}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;max-width:430px}
+.tt .m{color:var(--tm)}
+.tt .sep{border-top:1px solid var(--grid);margin:6px 0}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap;vertical-align:top}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+td.w{white-space:normal;min-width:260px}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+.pt{cursor:pointer}
+.lb{paint-order:stroke;stroke:var(--s1);stroke-width:3px;stroke-linejoin:round}
+</style></head><body><div class="v">
+<h1>FP8 GEMM（dense_fp8_gemm_rowwise）：三条 lane 的搜索轨迹（横轴 = 真实耗时）</h1>
+<p class="sub">budget 6 · gpt-6.1-sol / medium / 1,050,000 上下文 · 冷启动 · 2026-10-26 先后串行运行 ·
+<b>V6P5FQ</b> GPU 5,6,7（04:44Z 启动，3 轮 / 6 格 / 4h43m，预算耗尽退出，终验 1.2985x）·
+<b>official 第 1 次</b> GPU 0,1,2（09:37Z，3 轮 / 6 格 / 5h24m，预算耗尽，终验 1.1247x）·
+<b>official 第 2 次</b> GPU 0,1,2（20:19Z，3 轮 / 6 格 / 3h05m，预算耗尽，终验 1.1616x）<br>
+每点 = 一个 engineer 方向经 verify 独立复测的 whole-table geomean（11 个 shape 不加权几何平均，相对现场厂商库）。细线把同一轮的方向连成一组；粗线顺着每轮最好的方向延续；虚线接到 Director 终验。三条 lane 的种子都约 0.47x，在图外。</p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--v6)"></span>V6P5FQ 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--o1)"></span>official 第 1 次 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--o2)"></span>official 第 2 次 轮最好</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="sw3"></span>接 Director 终验</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>verified，未提交</span>
+ <span class="lg"><span class="df" style="background:var(--ts)"></span>verified，本轮提交</span>
+ <span class="lg"><span class="dm" style="border:2px solid var(--ts)"></span>integrate 合并（自测）</span>
+ <span class="lg"><span class="sq" style="background:var(--ts)"></span>Director 终验</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed（无测量值）</span>
+</div>
+<svg id="c" width="980" height="560" role="img" aria-label="三条 FP8 GEMM lane 的 speedup 随耗时变化"></svg>
+<div class="tt" id="tt"></div>
+<details><summary>数据表（14 个方向 · 2 次合并 · 3 次终验）</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">verified geomean</th><th class="n">lane 自身口径</th><th class="n">engineer 自报</th><th>状态</th><th class="n">完成时刻</th><th>备注</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+① <b>谁快</b>：按相对时刻比，第 1 轮 official 第 2 次在 1.53h 得到 1.0987，V6P5FQ 在 1.46h 得到 1.0468，official 第 1 次第 1 轮没有测量值。第 2 轮 official 第 2 次在 2.09h 到 1.1682，高于 V6P5FQ 同轮最好的方向（r2_d1，1.1361，2.28h）和合并结果（1.1563，2.71h），在 2.09h–3.74h 这段领先。第 3 轮 V6P5FQ 的 r3_d1（host_runtime）在 3.74h 到 <b>1.3348</b>，是三条 lane 里唯一超过 1.2 的方向；official 第 2 次第 3 轮最好只有 1.1567，没有提交，2.99h 终验结束；official 第 1 次到 4.48h 才到 1.1251。终验 <b>V6P5FQ 1.2985 &gt; official 第 2 次 1.1616 &gt; official 第 1 次 1.1247</b>。<br>
+② <b>✕ 的原因各不相同</b>：official 第 1 次 r1_d0（deep_explore，占 2 格）的补丁删除了 4 个 <code>.rocprofv3/*-counter_values.dat</code>，而干净工作区不含 <code>.rocprofv3</code>，<code>git apply</code> 失败。official 第 1 次 r3_d0 在 60 分钟内没有返回（<code>kernel_lane.js:647</code> 的 <code>AGENT_TIMEOUT_MS=3600000</code>），恢复验证时补丁为空；它在 14:09:13Z 才交出 2,958 字节的补丁（自报 1.0512），而 commit r3 已于 14:06:52Z 开始。official 第 2 次的 r2_d0 和 r3_d1（都是 memory）则是 engineer 自己写明没有提升、故意留空补丁，自报的 1.1073 / 1.1697 是原 incumbent 的现场分数。V6P5FQ 的 5 个方向都有有效测量。<br>
+③ <b>口径统一为现场厂商库</b>：official 第 2 次这条 lane 自己按 setup 时冻结的 oracle 毫秒数打分，过程值 1.0368 / 1.1015 / 1.0868，终验 1.0899；它的 verify 和 Director 结果里同时记录了现场口径的值，图里用的是这组（1.0987 / 1.1682 / 1.1567 / 1.1616）。V6P5FQ 和 official 第 1 次每次 verify 都重测了现场 oracle，本来就是现场口径。<br>
+④ <b>合并（◇）不在粗线上</b>：V6P5FQ 第 2 轮把 r2_d1 + r2_d0 合并得 1.1563，高于单个方向，提交的是合并结果；第 3 轮合并只有 1.3192，低于 r3_d1 单独的 1.3348，提交的是 r3_d1。合并值是 integrate agent 自己测的，不是 verify 独立复测，所以粗线只连方向点。V6P5FQ 的合并 r2（1.1563，2.71h）和 official 第 2 次的 r3_d0（1.1567，2.74h）几乎重合，悬停会同时列出两者。<br>
+⑤ <b>终验与轮内值</b>：V6P5FQ 终验 1.2985 比 r3_d1 的 verify 值 1.3348 低 2.7%，是 Director 对最终补丁重新测量的结果。official 第 2 次第 3 轮没有提交，Director 终验的是第 2 轮 r2_d1 的代码（1.1616；verify 时 1.1682）。<br>
+⑥ <b>运行条件</b>：三条 lane 先后串行，处在不同时段（API 响应速度不同）；V6P5FQ 用 HIP 5,6,7，official 两次用 HIP 0,1,2。official 同一配置跑了两次，终验相差 0.037（1.1247 vs 1.1616）；V6P5FQ 只跑了一次，它的领先里也包含单次运行的偶然性。
+</p></div>
+<script>
+const LN={v6:{n:"V6P5FQ",c:"var(--v6)"},o1:{n:"official 第 1 次",c:"var(--o1)"},o2:{n:"official 第 2 次",c:"var(--o2)"}};
+const ORDER=["v6","o1","o2"];
+const D=[
+["v6","r1_d0",1,"deep_explore",1.0468,"verified",1,1.0468,1.0492,"partial",1.4583,"deep_explore，占 2 格；engineer 状态 partial；第 1 轮提交"],
+["v6","r2_d1",2,"host_runtime",1.1361,"verified",0,1.1361,1.1411,"success",2.2751,"与 r2_d0 合并后一起提交（合并 1.1563）"],
+["v6","r2_d0",2,"algorithm",1.0646,"verified",0,1.0646,1.0661,"success",2.5938,"与 r2_d1 合并后一起提交（合并 1.1563）"],
+["v6","r3_d1",3,"host_runtime",1.3348,"verified",1,1.3348,1.3247,"success",3.7389,"第 3 轮提交；与 r3_d0 合并只有 1.3192，不如它单独"],
+["v6","r3_d0",3,"memory",1.169,"verified",0,1.169,1.1612,"partial",4.0341,"engineer 状态 partial；合并没有更好，未提交"],
+["o1","r1_d0",1,"deep_explore",0,"apply_failed",0,0,1.0127,"partial",1.3746,"deep_explore，占 2 格。补丁（13,062 字节）删除了 4 个 .rocprofv3/*-counter_values.dat，干净工作区不含 .rocprofv3，git apply 失败；engineer 报告同一私有工作区出现重叠执行、GPU0 锁等待 1200 秒超时，主动暂停（partial）"],
+["o1","r2_d0",2,"deep_explore",1.0332,"verified",1,1.0332,null,"failed",2.8187,"deep_explore，占 2 格。engineer 60 分钟内没有返回，工作流按磁盘上的补丁做恢复验证（recovered）；engineer 最终返回 failed；第 2 轮提交"],
+["o1","r3_d0",3,"memory",0,"apply_failed",0,0,1.0512,"success",4.2803,"engineer 60 分钟内没有返回，恢复验证时补丁为空；它在 14:09:13Z 才交出 2,958 字节补丁（自报 1.0512），commit r3 已于 14:06:52Z 开始，结果没被用上"],
+["o1","r3_d1",3,"host_runtime",1.1251,"verified",1,1.1251,1.1253,"success",4.4848,"engineer 60 分钟内没有返回，按磁盘上的补丁做恢复验证（recovered）；第 3 轮提交"],
+["o2","r1_d0",1,"deep_explore",1.0987,"verified",1,1.0368,1.101,"partial",1.5313,"deep_explore，占 2 格；第 1 轮提交"],
+["o2","r2_d0",2,"memory",0,"apply_failed",0,0,1.1073,"partial",2.0495,"engineer 写明没有增量提升，故意留空补丁（0 字节）；自报 1.1073 是原 incumbent 的现场分数，不是新增益"],
+["o2","r2_d1",2,"host_runtime",1.1682,"verified",1,1.1015,1.1752,"success",2.0854,"第 2 轮提交；Director 终验的就是这份代码"],
+["o2","r3_d1",3,"memory",0,"apply_failed",0,0,1.1697,"partial",2.6118,"engineer 写明 NO OPTIMIZATION WIN，补丁 0 字节；自报 1.1697 是原 incumbent 的现场分数"],
+["o2","r3_d0",3,"host_runtime",1.1567,"verified",0,1.0868,1.1707,"partial",2.7405,"低于 r2_d1（1.1682），第 3 轮未提交"]
+].map(a=>({l:a[0],id:a[1],r:a[2],s:a[3],g:a[4],v:a[5],c:a[6],b:a[7],e:a[8],es:a[9],h:a[10],note:a[11]}));
+const M=[["v6",2,"r2_d1 + r2_d0",1.1563,1,1,2.7079],["v6",3,"r3_d1 + r3_d0",1.3192,0,0,4.136]]
+ .map(a=>({l:a[0],r:a[1],p:a[2],g:a[3],imp:a[4],c:a[5],h:a[6]}));
+const F=[["v6",1.2985,1.2985,4.5895,"4h43m"],["o1",1.1247,1.1247,5.243,"5h24m"],["o2",1.1616,1.0899,2.989,"3h05m"]]
+ .map(a=>({l:a[0],g:a[1],b:a[2],h:a[3],dur:a[4]}));
+
+const W=980,H=560,ML=62,MR=150,TMAX=5.6;
+const iw=W-ML-MR,TY=46,AH=430,BOT=TY+AH,LO=0.98,HI=1.36,RY=BOT+62;
+const X=h=>ML+h/TMAX*iw;
+const Y=g=>BOT-(g-LO)/(HI-LO)*AH;
+const NS="http://www.w3.org/2000/svg",svg=document.getElementById("c");
+const E=(n,a,t)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined)e.textContent=t;svg.appendChild(e);return e;};
+const f4=g=>g.toFixed(4),fh=h=>h.toFixed(2)+"h",ok=d=>d.v!=="apply_failed";
+
+for(let i=0;i<=7;i++){const g=1+i*0.05;E("line",{x1:ML,x2:ML+iw,y1:Y(g),y2:Y(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:Y(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2));}
+for(let h=0;h<=5;h++){E("line",{x1:X(h),x2:X(h),y1:TY,y2:BOT,stroke:"var(--grid)"});
+ E("text",{x:X(h),y:BOT+22,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h");}
+E("line",{x1:ML,x2:ML+iw,y1:Y(1),y2:Y(1),stroke:"var(--ts)","stroke-width":1.5});
+E("text",{x:ML+iw+9,y:Y(1)+4,"font-size":11.5,fill:"var(--ts)"},"1.000 vendor 平价");
+E("text",{x:ML-11,y:TY-12,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup");
+E("line",{x1:ML,x2:ML+iw,y1:BOT,y2:BOT,stroke:"var(--axis)"});
+E("text",{x:ML+iw,y:BOT+42,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自 lane 启动的小时数（三条 lane 各自从 0 起算）");
+E("text",{x:ML-11,y:BOT+58,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值");
+E("line",{x1:ML,x2:ML+iw,y1:BOT+52,y2:BOT+52,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+
+const segs=[],boxes=[],P=[],best={};
+const line=(pts,a)=>{E("polyline",{points:pts.map(p=>p.join(",")).join(" "),fill:"none","stroke-linejoin":"round","stroke-linecap":"round",...a});
+ for(let i=1;i<pts.length;i++)segs.push([...pts[i-1],...pts[i]]);};
+ORDER.forEach(l=>{
+ const c=LN[l].c,ds=D.filter(d=>d.l===l),rs=[...new Set(ds.map(d=>d.r))].sort((a,b)=>a-b);
+ rs.forEach(r=>{
+  const grp=[...ds.filter(d=>d.r===r&&ok(d)),...M.filter(m=>m.l===l&&m.r===r)].sort((a,b)=>a.h-b.h);
+  if(grp.length>1)line(grp.map(d=>[X(d.h),Y(d.g)]),{stroke:c,"stroke-width":1.6,opacity:.42});});
+ best[l]=rs.map(r=>{const m=ds.filter(d=>d.r===r&&ok(d));return m.length?m.reduce((a,b)=>b.g>a.g?b:a):null;}).filter(Boolean);
+ line(best[l].map(p=>[X(p.h),Y(p.g)]),{stroke:c,"stroke-width":2.5});
+ const fin=F.find(f=>f.l===l),last=best[l][best[l].length-1];
+ line([[X(last.h),Y(last.g)],[X(fin.h),Y(fin.g)]],{stroke:c,"stroke-width":2,"stroke-dasharray":"5 4"});
+});
+
+const dirHTML=d=>`<b>${LN[d.l].n} · ${d.id}</b><br>specialty: ${d.s} · round ${d.r}<br>`+
+ (ok(d)?`verified geomean（现场）: <b>${f4(d.g)}</b>`+(d.b!==d.g?`<br>lane 自身口径（setup 锚点）: ${f4(d.b)}`:""):"verified geomean: <b>—</b>（apply_failed）")+
+ `<br>engineer 自报: ${d.e==null?"—":f4(d.e)}（${d.es}）<br><span class="m">${d.v}${d.c?" · 本轮提交":""} · 完成于 ${fh(d.h)}</span><br><span class="m">${d.note}</span>`;
+const mergeHTML=m=>`<b>${LN[m.l].n} · 合并 r${m.r}</b><br>${m.p}<br>integrate 自测 geomean: <b>${f4(m.g)}</b><br>`+
+ `<span class="m">${m.imp?"高于单个方向，提交了合并结果":"不高于单个方向，未采用"} · 完成于 ${fh(m.h)}</span>`;
+const finalHTML=f=>`<b>${LN[f.l].n} · Director 终验</b><br>geomean（现场）: <b>${f4(f.g)}</b>`+
+ (f.b!==f.g?`<br>lane 自身口径（setup 锚点）: ${f4(f.b)}`:"")+`<br><span class="m">accepted · 完成于 ${fh(f.h)} · lane 总耗时 ${f.dur}</span>`;
+
+const tt=document.getElementById("tt");
+const hook=(e,p)=>{
+ e.addEventListener("mouseenter",()=>{const near=P.filter(q=>q!==p&&Math.hypot(q.x-p.x,q.y-p.y)<10);
+  tt.innerHTML=[p,...near].map(q=>q.html).join('<div class="sep"></div>');tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{const w=tt.offsetWidth,hh=tt.offsetHeight;
+  let x=ev.clientX+15,y=ev.clientY-14;if(x+w>innerWidth-8)x=ev.clientX-15-w;if(y+hh>innerHeight-8)y=innerHeight-8-hh;
+  tt.style.left=x+"px";tt.style.top=Math.max(8,y)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+const mark=(e,x,y,k,html)=>{boxes.push({x1:x-k,y1:y-k,x2:x+k,y2:y+k});const p={x,y,html};P.push(p);hook(e,p);};
+
+ORDER.forEach(l=>{
+ const c=LN[l].c;
+ M.filter(m=>m.l===l).forEach(m=>{const x=X(m.h),y=Y(m.g),k=8.5;
+  mark(E("polygon",{points:`${x},${y-k} ${x+k},${y} ${x},${y+k} ${x-k},${y}`,fill:m.c?c:"var(--s1)",stroke:c,"stroke-width":2,class:"pt"}),x,y,k+1,mergeHTML(m));});
+ D.filter(d=>d.l===l).forEach(d=>{const x=X(d.h);
+  if(!ok(d))mark(E("text",{x,y:RY,"text-anchor":"middle","font-size":15,fill:c,class:"pt"},"✕"),x,RY-5,7,dirHTML(d));
+  else{const y=Y(d.g);mark(E("circle",{cx:x,cy:y,r:5,fill:d.c?c:"var(--s1)",stroke:c,"stroke-width":2.5,class:"pt"}),x,y,7,dirHTML(d));}});
+ const f=F.find(f=>f.l===l),x=X(f.h),y=Y(f.g);
+ mark(E("rect",{x:x-6,y:y-6,width:12,height:12,fill:c,stroke:"var(--s1)","stroke-width":1.5,class:"pt"}),x,y,8,finalHTML(f));
+});
+
+const DIRS=[[0,-1,"middle"],[0,1,"middle"],[1,0,"start"],[-1,0,"end"],[.75,-.75,"start"],[.75,.75,"start"],[-.75,-.75,"end"],[-.75,.75,"end"]];
+const MORE=[12,18,26].flatMap(d=>DIRS.map(([ux,uy,an])=>[Math.round(ux*d),Math.round(uy*d)+(uy===0?4:3),an]));
+const AR=[[0,-11,"middle"],[0,19,"middle"],[10,4,"start"],[-10,4,"end"],[9,-9,"start"],[9,17,"start"],[-9,-9,"end"],[-9,17,"end"]].concat(MORE);
+const RIGHT=[[11,4,"start"],[11,-9,"start"],[11,17,"start"],[0,-13,"middle"],[0,22,"middle"],[-11,4,"end"]].concat(MORE);
+const LEFT=[[-10,4,"end"],[-9,-9,"end"],[-9,17,"end"],[0,-12,"middle"],[0,20,"middle"],[10,4,"start"],[9,-9,"start"],[9,17,"start"]].concat(MORE);
+const cost=b=>{
+ let c=(b.x1<0||b.x2>W||b.y1<0||b.y2>H)?1000:0;
+ for(const o of boxes)if(b.x1<o.x2&&b.x2>o.x1&&b.y1<o.y2&&b.y2>o.y1)c+=50;
+ for(const [x1,y1,x2,y2] of segs){const n=Math.max(2,Math.ceil(Math.hypot(x2-x1,y2-y1)/2));
+  for(let i=0;i<=n;i++){const px=x1+(x2-x1)*i/n,py=y1+(y2-y1)*i/n;if(px>b.x1&&px<b.x2&&py>b.y1&&py<b.y2)c+=1;}}
+ return c;};
+const place=(x,y,txt,a,cands)=>{
+ const t=E("text",{...a,class:"lb"},txt);let pick=null;
+ for(const [dx,dy,an] of cands){
+  t.setAttribute("x",x+dx);t.setAttribute("y",y+dy);t.setAttribute("text-anchor",an);
+  const bb=t.getBBox(),b={x1:bb.x-2,y1:bb.y-1,x2:bb.x+bb.width+2,y2:bb.y+bb.height+1},c=cost(b);
+  if(!pick||c<pick.c)pick={c,dx,dy,an,b};
+  if(c===0)break;}
+ t.setAttribute("x",x+pick.dx);t.setAttribute("y",y+pick.dy);t.setAttribute("text-anchor",pick.an);
+ boxes.push(pick.b);return t;};
+
+ORDER.forEach(l=>{const f=F.find(f=>f.l===l);
+ place(X(f.h),Y(f.g),`${LN[l].n} 终验 ${f4(f.g)}`,{"font-size":11.5,"font-weight":600,fill:LN[l].c},RIGHT);});
+ORDER.forEach(l=>best[l].forEach(p=>place(X(p.h),Y(p.g),f4(p.g),{"font-size":10.5,"font-weight":600,fill:LN[l].c},AR)));
+ORDER.forEach(l=>{const ds=D.filter(d=>d.l===l);
+ ds.filter(d=>!ok(d)).forEach(d=>E("text",{x:X(d.h)+9,y:RY-1,"font-size":10,"font-weight":600,fill:LN[l].c,opacity:.8},d.id));
+ [...new Set(ds.map(d=>d.r))].forEach(r=>{const m=ds.filter(d=>d.r===r&&ok(d)).sort((a,b)=>a.h-b.h);
+  if(m.length)place(X(m[0].h),Y(m[0].g),"r"+r,{"font-size":10.5,"font-weight":600,fill:LN[l].c,opacity:.8},LEFT);});});
+
+const tb=document.querySelector("#t tbody");
+ORDER.forEach(l=>{const n=LN[l].n;
+ [...D.filter(d=>d.l===l).map(d=>({h:d.h,html:`<td>${n}</td><td>${d.id}</td><td class="n">${d.r}</td><td>${d.s}</td>`+
+   `<td class="n">${ok(d)?f4(d.g):"—"}</td><td class="n">${ok(d)?f4(d.b):"—"}</td><td class="n">${d.e==null?"—":f4(d.e)}</td>`+
+   `<td>${d.v}${d.c?" · 本轮提交":""}</td><td class="n">${fh(d.h)}</td><td class="w">${d.note}</td>`})),
+  ...M.filter(m=>m.l===l).map(m=>({h:m.h,html:`<td>${n}</td><td>合并 r${m.r}</td><td class="n">${m.r}</td><td>${m.p}</td>`+
+   `<td class="n">${f4(m.g)}</td><td class="n">—</td><td class="n">—</td><td>integrate${m.c?" · 本轮提交":""}</td><td class="n">${fh(m.h)}</td>`+
+   `<td class="w">integrate agent 自测，不是 verify 独立复测；${m.imp?"高于单个方向":"不高于单个方向，未采用"}</td>`})),
+  ...F.filter(f=>f.l===l).map(f=>({h:f.h,html:`<td>${n}</td><td>Director</td><td class="n">—</td><td>—</td>`+
+   `<td class="n">${f4(f.g)}</td><td class="n">${f4(f.b)}</td><td class="n">—</td><td>accepted</td><td class="n">${fh(f.h)}</td>`+
+   `<td class="w">Director 对最终补丁的独立终验；lane 总耗时 ${f.dur}</td>`}))]
+ .sort((a,b)=>a.h-b.h).forEach(it=>{const tr=document.createElement("tr");tr.innerHTML=it.html;tb.appendChild(tr);});});
+</script></body></html>

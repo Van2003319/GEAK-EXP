@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>FP8 GEMM — 七条 lane 的搜索轨迹</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--v6:#eb6834;--a6:#d63384;--b6:#9a6324;--o1:#2a78d6;--o2:#8b5cf6;--v8:#1e9e4f;--a7:#0f8f99;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1040px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;
+ --v6:#d95926;--a6:#f06aa8;--b6:#c48a4a;--o1:#3987e5;--o2:#a78bfa;--v8:#3fc46f;--a7:#38c2cc}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--v6:#d95926;--a6:#f06aa8;--b6:#c48a4a;--o1:#3987e5;--o2:#a78bfa;--v8:#3fc46f;--a7:#38c2cc}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.55}
+.lgd{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.sw3{width:22px;height:0;border-top:2.5px dashed var(--ts)}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+.df{width:11px;height:11px;border-radius:50%}
+.dm{width:9px;height:9px;transform:rotate(45deg);box-sizing:border-box;margin:0 1px;background:var(--s1)}
+.sq{width:10px;height:10px}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;max-width:430px}
+.tt .m{color:var(--tm)}
+.tt .sep{border-top:1px solid var(--grid);margin:6px 0}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap;vertical-align:top}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+td.w{white-space:normal;min-width:260px}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+.pt{cursor:pointer}
+.lb{paint-order:stroke;stroke:var(--s1);stroke-width:3px;stroke-linejoin:round}
+</style></head><body><div class="v">
+<h1>FP8 GEMM（dense_fp8_gemm_rowwise）：七条 lane 的搜索轨迹（横轴 = 实际耗时）</h1>
+<p class="sub">budget 6 · gpt-6.1-sol / medium / 1,050,000 上下文 · 冷启动 · 同一冻结任务 · 七条都是预算耗尽退出 ·
+<b>V6P5FQ</b> GPU 5,6,7（10/26 04:44Z，4h43m，终验 1.2985x）·
+<b>official 第 1 次</b> GPU 0,1,2（10/26 09:37Z，5h24m，1.1247x）·
+<b>V8</b> GPU 5,6,7（10/26 09:49Z，与 official 第 1 次并行，5h10m，1.1769x，flagged）·
+<b>official 第 2 次</b> GPU 0,1,2（10/26 20:19Z，3h05m，1.1616x）·
+<b>V6P5FQ+调优</b>：工程师用 P5F + 提交后 P5F 调优，GPU 0,1,2（10/27 09:14Z，6h52m，1.1973x，flagged）·
+<b>V6P5FQ 仅调优</b>：工程师不用 P5F + 提交后 P5F 调优，GPU 5,6,7（10/27 10:02Z，与前者并行，5h56m，0.4762x＝种子，flagged）·<br><b>V6P5FQ+调优（第二次）</b>：与 V6P5FQ+调优同配置，tw049 单独运行，GPU 0,1,2（10/28 08:16Z，实际用时 5h17m；墙钟 18h18m，扣除 API 中断 13h00m；1.2940x，accepted）<br>
+每点 = 一个 engineer 方向经 verify 独立复测的 whole-table geomean（11 个 shape 不加权几何平均，相对现场厂商库）。细线把同一轮的方向连成一组；粗线顺着每轮最好的方向延续；虚线接到 Director 终验。七条 lane 的种子都约 0.47–0.48x，在图外；低于 0.85 的点画在底边。横轴是各 lane 的实际运行时间：V6P5FQ+调优（第二次）在 5.10h 遇到 API 断开，图中扣除了中断的 13h00m（// 处，见注 ⑧）。</p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--v6)"></span>V6P5FQ</span>
+ <span class="lg"><span class="sw" style="background:var(--o1)"></span>official 第 1 次</span>
+ <span class="lg"><span class="sw" style="background:var(--v8)"></span>V8</span>
+ <span class="lg"><span class="sw" style="background:var(--o2)"></span>official 第 2 次</span>
+ <span class="lg"><span class="sw" style="background:var(--a6)"></span>V6P5FQ+调优</span>
+ <span class="lg"><span class="sw" style="background:var(--b6)"></span>V6P5FQ 仅调优</span>
+ <span class="lg"><span class="sw" style="background:var(--a7)"></span>V6P5FQ+调优（第二次）</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="sw3"></span>接 Director 终验</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>verify 测量，未提交</span>
+ <span class="lg"><span class="df" style="background:var(--ts)"></span>本轮提交</span>
+ <span class="lg"><span class="dm" style="border:2px solid var(--ts)"></span>integrate 合并（自测）</span>
+ <span class="lg"><span class="sq" style="background:var(--ts)"></span>Director 终验</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">▼</span>终验低于 0.85（画在底边）</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed（无测量值）</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">△</span>提交后 P5F 调优（未找到更快参数）</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">▲</span>提交后 P5F 调优（找到更快参数）</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">★</span>调优后 verify（提交）</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">▽</span>verify 低于 0.85（画在底边）</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">//</span>扣除的 API 中断</span>
+</div>
+<svg id="c" width="980" height="640" role="img" aria-label="七条 FP8 GEMM lane 的 speedup 随实际耗时变化"></svg>
+<div class="tt" id="tt"></div>
+<details><summary>数据表（33 个方向 · 3 次合并 · 3 次提交后调优 · 7 次终验）</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">verified geomean</th><th class="n">verified_geomean 字段</th><th class="n">engineer 自报</th><th>状态</th><th class="n">完成时刻</th><th>备注</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+① <b>谁快</b>（各自从启动算起）：第 1 轮 V8 在 1.64h 得到 1.1293，official 第 2 次 1.53h 1.0987，V6P5FQ+调优 1.57h 1.0922，V6P5FQ 1.46h 1.0468，V6P5FQ 仅调优 2.01h 0.8839，official 第 1 次第 1 轮没有测量值，V6P5FQ+调优（第二次）三个方向在 1.54–1.62h 都低于 1.0（最好 0.8761），没有提交。第 2 轮 official 第 2 次 2.09h 到 1.1682；V6P5FQ 2.28h 1.1361、2.71h 合并 1.1563；V8 3.05h 1.1744；V6P5FQ+调优 3.50h 1.1830、3.93h 合并 1.2046；V6P5FQ 仅调优 3.45h 1.0458；V6P5FQ+调优（第二次）2.96h 1.2023（提交），提交后调优在 4.10h 把它调到 1.2827（提交）。第 3 轮 V6P5FQ 的 r3_d1 在 3.74h 到 <b>1.3348</b>，是所有方向里最高的；V6P5FQ+调优 6.48h 1.1992，V6P5FQ 仅调优 5.31h 1.0893。终验 <b>V6P5FQ 1.2985 &gt; V6P5FQ+调优（第二次）1.2940 &gt; V6P5FQ+调优 1.1973 &gt; V8 1.1769 &gt; official 第 2 次 1.1616 &gt; official 第 1 次 1.1247 &gt; V6P5FQ 仅调优 0.4762（种子）</b>。<br>
+② <b>✕ 的原因</b>：official 第 1 次的两个 ✕ 是流程问题。r1_d0（deep_explore，占 2 格）的补丁删除了 4 个 <code>.rocprofv3/*-counter_values.dat</code>，干净工作区不含 <code>.rocprofv3</code>，<code>git apply</code> 失败；r3_d0 在 60 分钟上限内没有交出补丁（<code>kernel_lane.js:647</code> 的 <code>AGENT_TIMEOUT_MS=3600000</code>），重试在 14:09:13Z 交出补丁时，commit r3 已于 14:06:52Z 开始。official 第 2 次（r2_d0、r3_d1）和 V8（r2_d0、r3_d1）的 4 个 ✕ 都是 engineer 自己写明没有找到提升、故意留空补丁或恢复了源文件。10/27 两条 lane 和 V6P5FQ+调优（第二次）没有 ✕。<br>
+③ <b>口径统一为现场厂商库</b>：V6P5FQ 和 official 第 1 次的 verify 每次都重测现场 oracle，<code>verified_geomean</code> 字段本身就是现场口径。official 第 2 次的这个字段用 setup 时冻结的 oracle 毫秒数作分母，V8 第 1、2 轮用 HIP 种子作分母，它们的 verify 和 Director 同时报告了现场口径，图里用的是后者。10/27 两条 lane 的这个字段大多也用 setup 时冻结的 oracle（比现场快约 6–8%，例如 V6P5FQ+调优 r1 记 1.0191、V6P5FQ 仅调优 r3 记 1.0059）且没有现场字段，图里用该次 verify 自己三份完整性能报告的现场 oracle geomean 中位数；终验用 Director 报告的现场值（V6P5FQ+调优 1.1973），V6P5FQ 仅调优取 Director 性能报告（0.4762）。框架的提交门槛（要比累计最好值高 <code>min_improve</code>=1%）比较的是这个字段，所以 V8 第 3 轮是拿 1.1747 比 2.3382，V6P5FQ 仅调优的第 2、3 轮（现场 1.0458、1.0893）按冻结口径只有 0.9717、1.0059，一个被判 regression，一个没过门槛，三轮都没提交。V6P5FQ+调优（第二次）的 verify 每次都重测现场 oracle，这个字段本身就是现场口径（每个 shape 多次测量取中位数后再取几何平均）；r1_d2、r2_d2 把相对种子的值（1.5176、1.9012）写进了该字段，图里用它们同时报告的现场主指标 0.7738、0.9664。<br>
+④ <b>合并（◇）不在粗线上</b>：V6P5FQ 第 2 轮合并 1.1563（提交）、第 3 轮合并 1.3192（不如 r3_d1 单独，未采用）；V6P5FQ+调优第 2 轮把 r2_d2 + r2_d0 + r2_d1 合并得 1.2046，提交。合并值是 integrate agent 自己测的，不是 verify 独立复测，所以粗线只连方向点。有两处点几乎重合，悬停会同时列出：2.71–2.74h 的 V6P5FQ 合并 r2（1.1563）与 official 第 2 次 r3_d0（1.1567），1.53–1.57h 的 official 第 2 次 r1（1.0987）与 V6P5FQ+调优 r1（1.0922）。<br>
+⑤ <b>终验与轮内值</b>：Director 都是对最终补丁重新测量。V6P5FQ 终验比 r3_d1 低 2.7%；V8 比 r2_d1 高 0.2%；official 第 2 次终验的是 r2_d1 的代码；V6P5FQ+调优终验 1.1973，与它提交的合并结果 1.2046 相差 0.6%。flagged 的原因：V8 是 TechLead 标题数字用了 HIP 种子作分母；V6P5FQ+调优是补丁多带了不被使用的 <code>src/custom_fp8_gemm_hip.hip</code>（不在可改文件清单内），算法与正确性都没问题；V6P5FQ 仅调优是最终补丁为空，仍是 HIP 种子。V6P5FQ+调优（第二次）终验 1.2940，比调优后 verify 的 1.2827 高 0.9%；Director 三次完整测量 1.2867 / 1.2938 / 1.2947，按 setup 时冻结的 oracle 算是 1.2135。<br>
+⑥ <b>运行条件</b>：V8 与 official 第 1 次在 10/26 同时段并行，V6P5FQ+调优（HIP 0,1,2）与 V6P5FQ 仅调优（HIP 5,6,7）在 10/27 同时段并行，其余单独运行；V6P5FQ+调优（第二次）在 tw049 上单独运行（用 10/19 镜像重建的 yxh_geak，运行时版本与 tw046 相同），其余六条在 tw046。并行的两对只在 <code>ps</code> 进程列表里看到过对方的命令行，没有读过对方的文件。official 同一配置两次终验相差 0.037；每种配置只跑了 1–2 次，差距不能直接归因于框架或开关。<br>
+⑦ <b>提交后 P5F 调优（△）</b>：V6P5FQ+调优每次提交后都调了一次，两次各生成 425 组参数、实测 359 / 331 组，都没有比当前代码更快（kept_start），没有产生候选；调优 Engineer 四次调用都实际运行 gpt-6.1-sol/medium。V6P5FQ 仅调优因为一次都没提交，调优一次也没触发。V6P5FQ+调优（第二次）第 1 轮没有提交，调优只在第 2 轮提交后触发一次（▲）：生成 291 组、实测 199 组参数，配对实测延迟 1.0791×，verify 现场 1.2827（★，超过提交门槛），提交；用时 42.3 分钟；调优 Engineer 两次调用都实际运行 gpt-6.1-sol/medium。<br>
+⑧ <b>V6P5FQ+调优（第二次）的时间轴</b>：墙钟 18h18m（10/28 08:16Z → 10/29 02:34Z）。图中保留第一次运行到 TechLead 报告结束的 5.10h，再接断点回放 CLI 的 11.2 分钟（Director 5.6 分钟，随后 update_experience 和 kb:write），共 5h17m。扣除的 13h00m：第一次 Director 的失败尝试与 kb:write（停顿、ECONNRESET） 1.01h；等待 API 恢复 11.21h；原生 resume（作废） 0.42h；停止 resume、准备断点回放 0.37h。轮内的 agent 停顿重试（r2_d2 工程师 25 分钟、verify r2_d2 6 分钟、TechLead 报告 5 分钟）没有扣除，与其他 lane 一样计入。
+</p></div>
+<script>
+const LN={v6:{n:"V6P5FQ",c:"var(--v6)"},o1:{n:"official 第 1 次",c:"var(--o1)"},v8:{n:"V8",c:"var(--v8)"},o2:{n:"official 第 2 次",c:"var(--o2)"},
+ a6:{n:"V6P5FQ+调优",c:"var(--a6)"},b6:{n:"V6P5FQ 仅调优",c:"var(--b6)"},
+ a7:{n:"V6P5FQ+调优（第二次）",c:"var(--a7)"}};
+const ORDER=["v6","o1","v8","o2","a6","b6","a7"];
+const BASIS={o2:"setup 时冻结的 oracle 毫秒数作分母",v8:"HIP 种子作分母",a6:"setup 时冻结的 oracle 毫秒数作分母",b6:"setup 时冻结的 oracle 毫秒数作分母",a7:"HIP 种子作分母；现场主指标另报"};
+const LIVE_NOTE={a6:"现场值由该次 verify 的三份完整性能报告重算（中位数）",b6:"现场值由该次 verify 的完整性能报告重算（中位数）",a7:"现场值为该次 verify 报告的现场主指标"};
+const D=[
+["v6","r1_d0",1,"deep_explore",1.0468,"verified",1,1.0468,1.0492,1.0492,"partial",1.4583,"deep_explore，占 2 格；engineer 状态 partial；第 1 轮提交"],
+["v6","r2_d1",2,"host_runtime",1.1361,"verified",0,1.1361,1.1411,1.1411,"success",2.2751,"与 r2_d0 合并后一起提交（合并 1.1563）"],
+["v6","r2_d0",2,"algorithm",1.0646,"verified",0,1.0646,1.0661,1.0661,"success",2.5938,"与 r2_d1 合并后一起提交（合并 1.1563）"],
+["v6","r3_d1",3,"host_runtime",1.3348,"verified",1,1.3348,1.3247,1.3247,"success",3.7389,"第 3 轮提交；与 r3_d0 合并只有 1.3192，不如它单独"],
+["v6","r3_d0",3,"memory",1.169,"verified",0,1.169,1.1612,1.1612,"partial",4.0341,"engineer 状态 partial；合并没有更好，未提交"],
+["o1","r1_d0",1,"deep_explore",0,"apply_failed",0,0,1.0127,1.0127,"partial",1.3746,"deep_explore，占 2 格。补丁（13,062 字节）删除了 4 个 .rocprofv3/*-counter_values.dat，干净工作区不含 .rocprofv3，git apply 失败；engineer 报告同一私有工作区出现重叠执行、GPU0 锁等待 1200 秒超时，主动暂停（partial）"],
+["o1","r2_d0",2,"deep_explore",1.0332,"verified",1,1.0332,null,null,"failed",2.8187,"deep_explore，占 2 格。engineer 60 分钟内没有返回，工作流按磁盘上的补丁做恢复验证（recovered）；engineer 最终返回 failed；第 2 轮提交"],
+["o1","r3_d0",3,"memory",0,"apply_failed",0,0,1.0512,1.0512,"success",4.2803,"engineer 60 分钟内没有返回，恢复验证时补丁为空；它在 14:09:13Z 才交出 2,958 字节补丁（自报 1.0512），commit r3 已于 14:06:52Z 开始，结果没被用上"],
+["o1","r3_d1",3,"host_runtime",1.1251,"verified",1,1.1251,1.1253,1.1253,"success",4.4848,"engineer 60 分钟内没有返回，按磁盘上的补丁做恢复验证（recovered）；第 3 轮提交"],
+["v8","r1_d0",1,"deep_explore",1.1293,"verified",1,2.2393,1.1469,1.1469,"partial",1.637,"deep_explore，占 2 格。engineer 60 分钟内没有返回，按磁盘上的补丁做恢复验证（recovered）；现场口径 3 次 1.1296 / 1.1085 / 1.1293，取中位；第 1 轮提交"],
+["v8","r2_d0",2,"memory",0,"apply_failed",0,0,1.1164,1,"partial",2.7305,"engineer 写明目标没有达到、故意留空补丁（0 字节）；它试过的候选增量只有 0.9967x，被它自己否掉；自报 1.1164 是原 incumbent 的现场分数"],
+["v8","r2_d1",2,"host_runtime",1.1744,"verified",1,2.3382,1.1713,2.3159,"success",3.0481,"第 2 轮提交，Director 终验的就是这份代码；现场口径 3 次 1.1966 / 1.1744 / 1.1707，取中位；verified_geomean 字段 2.3382 被 TechLead 当成了标题数字"],
+["v8","r3_d1",3,"host_runtime",0,"apply_failed",0,0,1.1733,1,"partial",4.4514,"engineer 重试了 2 次；60 分钟上限时补丁为空，恢复验证无候选；engineer 最后写明没有可重复的提升、恢复了全部源文件；自报 1.1733 是原 incumbent 的现场分数"],
+["v8","r3_d0",3,"memory",1.1747,"verified",0,1.1747,1.1747,0.9938,"partial",4.6578,"engineer 60 分钟内没有返回，按当时磁盘上的补丁（M≥2048 的 prefill tile 配置）恢复验证；engineer 重试后自己也放弃了这个补丁。未提交：提交门槛拿 1.1747 比上一轮的字段值 2.3382；按现场口径也只比 r2_d1 高 0.03%"],
+["o2","r1_d0",1,"deep_explore",1.0987,"verified",1,1.0368,1.101,1.101,"partial",1.5313,"deep_explore，占 2 格；第 1 轮提交"],
+["o2","r2_d0",2,"memory",0,"apply_failed",0,0,1.1073,1.1073,"partial",2.0495,"engineer 写明没有增量提升，故意留空补丁（0 字节）；自报 1.1073 是原 incumbent 的现场分数，不是新增益"],
+["o2","r2_d1",2,"host_runtime",1.1682,"verified",1,1.1015,1.1752,1.1752,"success",2.0854,"第 2 轮提交；Director 终验的就是这份代码"],
+["o2","r3_d1",3,"memory",0,"apply_failed",0,0,1.1697,1.1697,"partial",2.6118,"engineer 写明 NO OPTIMIZATION WIN，补丁 0 字节；自报 1.1697 是原 incumbent 的现场分数"],
+["o2","r3_d0",3,"host_runtime",1.1567,"verified",0,1.0868,1.1707,1.1707,"partial",2.7405,"低于 r2_d1（1.1682），第 3 轮未提交"],
+["a6","r1_d0",1,"deep_explore",1.0922,"verified",1,1.0191,1.0902,1.0902,"partial",1.5748,"deep_explore，占 2 格；第 1 轮提交；之后的提交后调优没有找到更快参数"],
+["a6","r2_d2",2,"host_runtime",1.183,"verified",0,1.1804,1.1746,1.1746,"success",3.4965,"与 r2_d0、r2_d1 合并后一起提交（合并 1.2046）"],
+["a6","r2_d0",2,"memory",1.1019,"verified",0,1.1023,1.0984,1.0984,"partial",3.53,"与 r2_d2、r2_d1 合并后一起提交（合并 1.2046）"],
+["a6","r2_d1",2,"algorithm",1.0949,"verified",0,1.0256,1.0936,1.0936,"partial",3.6361,"与 r2_d2、r2_d0 合并后一起提交（合并 1.2046）"],
+["a6","r3_d0",3,"host_runtime",1.1992,"verified",0,1.1242,1.2134,1.2134,"partial",6.4843,"没有超过累计最好值（合并 1.2046），未提交"],
+["b6","r1_d0",1,"deep_explore",0.8839,"regression",0,0.8215,0.8849,0.8849,"partial",2.0107,"deep_explore，占 2 格；低于厂商库，regression"],
+["b6","r2_d0",2,"deep_explore",1.0458,"regression",0,0.9717,0.979,0.979,"partial",3.4515,"deep_explore，占 2 格。现场口径 1.0458，但 verify 按 setup 时冻结的 oracle 算出 0.9717，低于 1.0 被判 regression"],
+["b6","r3_d0",3,"deep_explore",1.0893,"verified",0,1.0059,1.0085,1.0085,"partial",5.3113,"deep_explore，占 2 格。verified，但冻结口径 1.0059 没过 1.01 的提交门槛，未提交；三轮都没提交，提交后调优一次也没触发"],
+["a7", "r1_d2", 1, "host_runtime", 0.7738, "regression", 0, 1.5176, 0.7737, 0.7737, "partial", 1.5375, "低于厂商库，regression；verified_geomean 字段 1.5176 是相对 HIP 种子的值，现场主指标 0.7738"],
+["a7", "r1_d0", 1, "algorithm", 0.8761, "regression", 0, 0.8761, 0.8857, 0.8857, "partial", 1.5961, "低于厂商库，regression；第 1 轮三个方向都没提交，所以这一轮之后没有触发提交后调优"],
+["a7", "r1_d1", 1, "memory", 0.7373, "regression", 0, 0.7373, 0.733, 0.733, "success", 1.6157, "低于厂商库，regression"],
+["a7", "r2_d0", 2, "host_runtime", 1.2023, "verified", 1, 1.2023, 1.2011, 1.2011, "success", 2.9601, "第 2 轮提交；之后的提交后 P5F 调优把它调到 1.2827；三份报告 geomean 中位数 1.2006"],
+["a7", "r2_d1", 2, "algorithm", 0.9679, "regression", 0, 0.9679, 0.9755, 0.9755, "partial", 3.0656, "engineer 60 分钟内没有返回（交给控制器的是 null），按磁盘上的补丁做恢复验证（recovered）；晚到的结果自报 0.9755"],
+["a7", "r2_d2", 2, "memory", 0.9664, "regression", 0, 1.9012, 0.9713, 0.9713, "partial", 3.1489, "engineer 第一次尝试停顿 25 分钟后重试；verified_geomean 字段 1.9012 是相对 HIP 种子的值，现场主指标 0.9664 低于 1.0，regression"]
+].map(a=>({l:a[0],id:a[1],r:a[2],s:a[3],g:a[4],v:a[5],c:a[6],b:a[7],e:a[8],ef:a[9],es:a[10],h:a[11],note:a[12]}));
+const M=[["v6",2,"r2_d1 + r2_d0",1.1563,1,1,2.7079],["v6",3,"r3_d1 + r3_d0",1.3192,0,0,4.136],["a6",2,"r2_d2 + r2_d0 + r2_d1",1.2046,1,1,3.9293]]
+ .map(a=>({l:a[0],r:a[1],p:a[2],g:a[3],imp:a[4],c:a[5],h:a[6]}));
+const T=[["a6",1,"kept_start",425,359,725.3,414,1.818],["a6",2,"kept_start",425,331,925.7,407.2,4.267],["a7", 2, "improved", 291, 199, 2536.1, 485.3, 3.9232, 1.0791, 1.2827, 4.1014, 1.2991, 1]]
+ .map(a=>({l:a[0],r:a[1],st:a[2],gen:a[3],timed:a[4],wall:a[5],gpu:a[6],h:a[7],p:a[8],vg:a[9],vh:a[10],vm:a[11],cm:a[12]}));
+const CUT=[["a7", 5.101, 13.0079, [["第一次 Director 的失败尝试与 kb:write（停顿、ECONNRESET）", "13:22–14:23Z", 1.012], ["等待 API 恢复", "14:23–次日 01:35Z", 11.2065], ["原生 resume（作废）", "01:35–02:00Z", 0.4185], ["停止 resume、准备断点回放", "02:00–02:22Z", 0.3709]]]].map(a=>({l:a[0],h:a[1],x:a[2],items:a[3]}));
+const F=[["v6",1.2985,1.2985,4.5895,"4h43m","accepted","比 r3_d1 的 verify 值 1.3348 低 2.7%"],
+ ["o1",1.1247,1.1247,5.243,"5h24m","accepted","与 r3_d1 的 verify 值 1.1251 基本一致"],
+ ["v8",1.1769,1.1769,5.1383,"5h10m","flagged","TechLead 标题数字 2.3382 用了 HIP 种子作分母；Director 以它按现场口径测的 1.1769 为准，补丁通过全部检查"],
+ ["o2",1.1616,1.0899,2.989,"3h05m","accepted","第 3 轮未提交，终验的是 r2_d1 的代码"],
+ ["a6",1.1973,1.1217,6.839,"6h52m","flagged","补丁多带了不被使用的 src/custom_fp8_gemm_hip.hip（不在可改文件清单内），算法与正确性无问题；现场值为 Director 报告的 supplemental live"],
+ ["b6",0.4762,0.4695,5.9244,"5h56m","flagged","三轮都没提交，最终补丁为空，等于 HIP/rocWMMA 种子；现场值取 Director 性能报告"],
+ ["a7", 1.294, 1.294, 5.2038, "5h17m", "accepted", "比调优后 verify 的 1.2827 高 0.9%；Director 三次完整测量 1.2867 / 1.2938 / 1.2947；按 setup 时冻结的 oracle 算是 1.2135；墙钟 18h18m，图中扣除了 API 中断的 13h00m"]]
+ .map(a=>({l:a[0],g:a[1],b:a[2],h:a[3],dur:a[4],st:a[5],note:a[6]}));
+
+const W=980,H=640,ML=62,MR=150,TMAX=7;
+const iw=W-ML-MR,TY=46,AH=480,BOT=TY+AH,LO=0.85,HI=1.36,RX=BOT+60,RT=BOT+86;
+const X=h=>ML+h/TMAX*iw;
+const Y=g=>BOT-(Math.min(Math.max(g,LO),HI)-LO)/(HI-LO)*AH;
+const NS="http://www.w3.org/2000/svg",svg=document.getElementById("c");
+const E=(n,a,t)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined)e.textContent=t;svg.appendChild(e);return e;};
+const f4=g=>g.toFixed(4),fh=h=>h.toFixed(2)+"h",ok=d=>d.v!=="apply_failed";
+const segs=[],boxes=[],P=[],best={};
+const reg=e=>{const b=e.getBBox();boxes.push({x1:b.x-1,y1:b.y-1,x2:b.x+b.width+1,y2:b.y+b.height+1});return e;};
+
+for(let i=0;i<=10;i++){const g=LO+i*0.05;E("line",{x1:ML,x2:ML+iw,y1:Y(g),y2:Y(g),stroke:"var(--grid)"});
+ reg(E("text",{x:ML-11,y:Y(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2)));}
+for(let h=0;h<=TMAX;h++){E("line",{x1:X(h),x2:X(h),y1:TY,y2:BOT,stroke:"var(--grid)"});
+ reg(E("text",{x:X(h),y:BOT+22,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h"));}
+E("line",{x1:ML,x2:ML+iw,y1:Y(1),y2:Y(1),stroke:"var(--ts)","stroke-width":1.5});
+reg(E("text",{x:ML+iw+9,y:Y(1)+4,"font-size":11.5,fill:"var(--ts)"},"1.000 vendor 平价"));
+reg(E("text",{x:ML+iw+9,y:BOT-4,"font-size":10.5,fill:"var(--tm)"},"↓ 低于 0.85 画在底边"));
+reg(E("text",{x:ML-11,y:TY-12,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup"));
+E("line",{x1:ML,x2:ML+iw,y1:BOT,y2:BOT,stroke:"var(--axis)"});
+reg(E("text",{x:ML+iw,y:BOT+40,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自 lane 启动的实际运行小时数（各 lane 各自从 0 起算；// 处扣除了 API 中断）"));
+reg(E("text",{x:ML-11,y:RX-4,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值"));
+reg(E("text",{x:ML-11,y:RT-4,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"P5F 调优"));
+E("line",{x1:ML,x2:ML+iw,y1:RX-9,y2:RX-9,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+E("line",{x1:ML,x2:ML+iw,y1:RT-9,y2:RT-9,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+
+const line=(pts,a)=>{E("polyline",{points:pts.map(p=>p.join(",")).join(" "),fill:"none","stroke-linejoin":"round","stroke-linecap":"round",...a});
+ for(let i=1;i<pts.length;i++)segs.push([...pts[i-1],...pts[i]]);};
+ORDER.forEach(l=>{
+ const c=LN[l].c,ds=D.filter(d=>d.l===l),rs=[...new Set(ds.map(d=>d.r))].sort((a,b)=>a-b);
+ rs.forEach(r=>{
+  const grp=[...ds.filter(d=>d.r===r&&ok(d)),...M.filter(m=>m.l===l&&m.r===r)].sort((a,b)=>a.h-b.h);
+  if(grp.length>1)line(grp.map(d=>[X(d.h),Y(d.g)]),{stroke:c,"stroke-width":1.6,opacity:.42});});
+ best[l]=rs.map(r=>{const m=ds.filter(d=>d.r===r&&ok(d));return m.length?m.reduce((a,b)=>b.g>a.g?b:a):null;}).filter(Boolean);
+ T.filter(t=>t.l===l&&t.cm).forEach(t=>best[l].push({h:t.vh,g:t.vg}));best[l].sort((a,b)=>a.h-b.h);
+ line(best[l].map(p=>[X(p.h),Y(p.g)]),{stroke:c,"stroke-width":2.5});
+ const fin=F.find(f=>f.l===l),last=best[l][best[l].length-1];
+ line([[X(last.h),Y(last.g)],[X(fin.h),Y(fin.g)]],{stroke:c,"stroke-width":2,"stroke-dasharray":"5 4"});
+ CUT.filter(k=>k.l===l).forEach(k=>{const x=X(k.h),y=Y(last.g)+(Y(fin.g)-Y(last.g))*(x-X(last.h))/(X(fin.h)-X(last.h));
+  k.px=x;k.py=y;[-3,3].forEach(o=>E("line",{x1:x+o-3,y1:y+7,x2:x+o+3,y2:y-7,stroke:c,"stroke-width":2,"stroke-linecap":"round"}));});
+});
+
+const dirHTML=d=>`<b>${LN[d.l].n} · ${d.id}</b><br>specialty: ${d.s} · round ${d.r}<br>`+
+ (ok(d)?`verify 测量（现场）: <b>${f4(d.g)}</b>`+(d.b!==d.g?`<br>verified_geomean 字段原值: ${f4(d.b)}（${BASIS[d.l]}）`:"")+(LIVE_NOTE[d.l]?`<br><span class="m">${LIVE_NOTE[d.l]}</span>`:""):"verified geomean: <b>—</b>（apply_failed）")+
+ `<br>engineer 自报（现场）: ${d.e==null?"—":f4(d.e)}（${d.es}）`+(d.ef!=null&&d.ef!==d.e?`<br>engineer speedup_geomean 字段原值: ${f4(d.ef)}（不是厂商库口径）`:"")+
+ `<br><span class="m">${d.v}${d.c?" · 本轮提交":""} · 完成于 ${fh(d.h)}</span><br><span class="m">${d.note}</span>`;
+const mergeHTML=m=>`<b>${LN[m.l].n} · 合并 r${m.r}</b><br>${m.p}<br>integrate 自测 geomean: <b>${f4(m.g)}</b><br>`+
+ `<span class="m">${m.imp?"高于单个方向，提交了合并结果":"不高于单个方向，未采用"} · 完成于 ${fh(m.h)}</span>`;
+const tuneHTML=t=>`<b>${LN[t.l].n} · 提交后 P5F 调优 r${t.r}</b><br>生成 ${t.gen} 组参数，实测 ${t.timed} 组<br>`+
+ `结果: <b>${t.st}</b>（没有比当前代码更快的参数，未产生候选，也就没有 verify 与提交）<br>`+
+ `<span class="m">用时 ${(t.wall/60).toFixed(1)} 分钟，GPU ${Math.round(t.gpu)} 秒 · 完成于 ${fh(t.h)}</span>`;
+const tuneHTML2=t=>t.st!=="improved"?tuneHTML(t):`<b>${LN[t.l].n} · 提交后 P5F 调优 r${t.r}</b><br>生成 ${t.gen} 组参数，实测 ${t.timed} 组<br>`+
+ `结果: <b>improved</b>（配对实测延迟 ${t.p.toFixed(4)}×），产生候选，verify 现场 ${f4(t.vg)}，${t.cm?"已提交":"未提交"}<br>`+
+ `<span class="m">用时 ${(t.wall/60).toFixed(1)} 分钟，GPU ${Math.round(t.gpu)} 秒 · 完成于 ${fh(t.h)}</span>`;
+const tuneVerHTML=t=>`<b>${LN[t.l].n} · 调优后 verify r${t.r}</b><br>verify 测量（现场）: <b>${f4(t.vg)}</b><br>`+
+ `三份完整报告 geomean 中位数 ${f4(t.vm)}<br><span class="m">${t.cm?"比累计最好值高 1% 以上，提交":"未提交"} · 完成于 ${fh(t.vh)}</span>`;
+const cutHTML=k=>`<b>${LN[k.l].n} · API 中断（已从横轴扣除）</b><br>共扣除 ${k.x.toFixed(2)}h：<br>`+
+ k.items.map(([w,s,h])=>`${w}（${s}，${h.toFixed(2)}h）`).join("<br>")+
+ `<br><span class="m">图中 ${fh(k.h)} 之后接断点回放：控制器正文不变，回放 28 个原始返回值后现场重跑 director:validate</span>`;
+const finalHTML=f=>`<b>${LN[f.l].n} · Director 终验</b><br>geomean（现场）: <b>${f4(f.g)}</b>`+
+ (f.g<LO?`<span class="m">（低于纵轴下限，画在底边）</span>`:"")+
+ (f.b!==f.g?`<br>director_verified_speedup_geomean 字段: ${f4(f.b)}（${BASIS[f.l]}）`:"")+
+ `<br><span class="m">${f.st} · 完成于 ${fh(f.h)} · lane 总耗时 ${f.dur}</span><br><span class="m">${f.note}</span>`;
+
+const tt=document.getElementById("tt");
+const hook=(e,p)=>{
+ e.addEventListener("mouseenter",()=>{const near=P.filter(q=>q!==p&&Math.hypot(q.x-p.x,q.y-p.y)<10);
+  tt.innerHTML=[p,...near].map(q=>q.html).join('<div class="sep"></div>');tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{const w=tt.offsetWidth,hh=tt.offsetHeight;
+  let x=ev.clientX+15,y=ev.clientY-14;if(x+w>innerWidth-8)x=ev.clientX-15-w;if(y+hh>innerHeight-8)y=innerHeight-8-hh;
+  tt.style.left=x+"px";tt.style.top=Math.max(8,y)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+const mark=(e,x,y,k,html)=>{boxes.push({x1:x-k,y1:y-k,x2:x+k,y2:y+k});const p={x,y,html};P.push(p);hook(e,p);};
+
+ORDER.forEach(l=>{
+ const c=LN[l].c;
+ M.filter(m=>m.l===l).forEach(m=>{const x=X(m.h),y=Y(m.g),k=8.5;
+  mark(E("polygon",{points:`${x},${y-k} ${x+k},${y} ${x},${y+k} ${x-k},${y}`,fill:m.c?c:"var(--s1)",stroke:c,"stroke-width":2,class:"pt"}),x,y,k+1,mergeHTML(m));});
+ D.filter(d=>d.l===l).forEach(d=>{const x=X(d.h);
+  if(!ok(d))mark(E("text",{x,y:RX,"text-anchor":"middle","font-size":15,fill:c,class:"pt"},"✕"),x,RX-5,7,dirHTML(d));
+  else if(d.g<LO){const y=Y(LO);mark(E("polygon",{points:`${x-6},${y-11} ${x+6},${y-11} ${x},${y}`,fill:d.c?c:"var(--s1)",stroke:c,"stroke-width":2,class:"pt"}),x,y-5,7,dirHTML(d));}
+  else{const y=Y(d.g);mark(E("circle",{cx:x,cy:y,r:5,fill:d.c?c:"var(--s1)",stroke:c,"stroke-width":2.5,class:"pt"}),x,y,7,dirHTML(d));}});
+ T.filter(t=>t.l===l).forEach(t=>{const x=X(t.h);
+  mark(E("text",{x,y:RT,"text-anchor":"middle","font-size":14,fill:c,class:"pt"},t.st==="improved"?"▲":"△"),x,RT-5,7,tuneHTML2(t));});
+ T.filter(t=>t.l===l&&t.vg).forEach(t=>{const x=X(t.vh),y=Y(t.vg);
+  mark(E("text",{x,y:y+6,"text-anchor":"middle","font-size":19,fill:c,stroke:"var(--s1)","stroke-width":1,class:"pt"},"★"),x,y,9,tuneVerHTML(t));});
+ CUT.filter(k=>k.l===l).forEach(k=>mark(E("rect",{x:k.px-9,y:k.py-9,width:18,height:18,fill:"transparent",class:"pt"}),k.px,k.py,9,cutHTML(k)));
+ const f=F.find(f=>f.l===l),x=X(f.h),y=Y(f.g);
+ if(f.g<LO)mark(E("polygon",{points:`${x-7},${y-11} ${x+7},${y-11} ${x},${y+1}`,fill:c,stroke:"var(--s1)","stroke-width":1.5,class:"pt"}),x,y-5,8,finalHTML(f));
+ else mark(E("rect",{x:x-6,y:y-6,width:12,height:12,fill:c,stroke:"var(--s1)","stroke-width":1.5,class:"pt"}),x,y,8,finalHTML(f));
+});
+
+const DIRS=[[0,-1,"middle"],[0,1,"middle"],[1,0,"start"],[-1,0,"end"],[.75,-.75,"start"],[.75,.75,"start"],[-.75,-.75,"end"],[-.75,.75,"end"]];
+const MORE=[12,18,26].flatMap(d=>DIRS.map(([ux,uy,an])=>[Math.round(ux*d),Math.round(uy*d)+(uy===0?4:3),an]));
+const AR=[[0,-11,"middle"],[0,19,"middle"],[10,4,"start"],[-10,4,"end"],[9,-9,"start"],[9,17,"start"],[-9,-9,"end"],[-9,17,"end"]].concat(MORE);
+const RIGHT=[[11,4,"start"],[11,-9,"start"],[11,17,"start"],[0,-13,"middle"],[0,22,"middle"],[-11,4,"end"]].concat(MORE);
+const LEFT=[[-10,4,"end"],[-9,-9,"end"],[-9,17,"end"],[0,-12,"middle"],[0,20,"middle"],[10,4,"start"],[9,-9,"start"],[9,17,"start"]].concat(MORE);
+const XROW=[[9,-1,"start"],[-9,-1,"end"],[0,14,"middle"],[9,12,"start"],[-9,12,"end"]];
+const cost=b=>{
+ let c=(b.x1<0||b.x2>W||b.y1<0||b.y2>H)?1000:0;
+ for(const o of boxes)if(b.x1<o.x2&&b.x2>o.x1&&b.y1<o.y2&&b.y2>o.y1)c+=50;
+ for(const [x1,y1,x2,y2] of segs){const n=Math.max(2,Math.ceil(Math.hypot(x2-x1,y2-y1)/2));
+  for(let i=0;i<=n;i++){const px=x1+(x2-x1)*i/n,py=y1+(y2-y1)*i/n;if(px>b.x1&&px<b.x2&&py>b.y1&&py<b.y2)c+=1;}}
+ return c;};
+const place=(x,y,txt,a,cands)=>{
+ const t=E("text",{...a,class:"lb"},txt);let pick=null;
+ for(const [dx,dy,an] of cands){
+  t.setAttribute("x",x+dx);t.setAttribute("y",y+dy);t.setAttribute("text-anchor",an);
+  const bb=t.getBBox(),b={x1:bb.x-2,y1:bb.y-1,x2:bb.x+bb.width+2,y2:bb.y+bb.height+1},c=cost(b);
+  if(!pick||c<pick.c)pick={c,dx,dy,an,b};
+  if(c===0)break;}
+ t.setAttribute("x",x+pick.dx);t.setAttribute("y",y+pick.dy);t.setAttribute("text-anchor",pick.an);
+ boxes.push(pick.b);return t;};
+
+ORDER.forEach(l=>{const f=F.find(f=>f.l===l);
+ place(X(f.h),Y(f.g)-(f.g<LO?5:0),`${LN[l].n} 终验 ${f4(f.g)}${f.g<LO?"（种子）":""}`,{"font-size":11.5,"font-weight":600,fill:LN[l].c},RIGHT);});
+ORDER.forEach(l=>best[l].forEach(p=>place(X(p.h),Y(p.g),f4(p.g),{"font-size":10.5,"font-weight":600,fill:LN[l].c},AR)));
+D.filter(d=>!ok(d)).sort((a,b)=>a.h-b.h).forEach(d=>
+ place(X(d.h),RX,d.id,{"font-size":10,"font-weight":600,fill:LN[d.l].c,opacity:.85},XROW));
+D.filter(d=>ok(d)&&d.g<LO).forEach(d=>place(X(d.h),Y(LO)-6,f4(d.g),{"font-size":10.5,"font-weight":600,fill:LN[d.l].c},AR));
+CUT.forEach(k=>place(k.px,k.py,"扣除中断 "+k.x.toFixed(1)+"h",{"font-size":10,"font-weight":600,fill:LN[k.l].c,opacity:.85},AR));
+T.forEach(t=>place(X(t.h),RT,"r"+t.r,{"font-size":10,"font-weight":600,fill:LN[t.l].c,opacity:.85},XROW));
+ORDER.forEach(l=>{const ds=D.filter(d=>d.l===l);
+ [...new Set(ds.map(d=>d.r))].forEach(r=>{const m=ds.filter(d=>d.r===r&&ok(d)).sort((a,b)=>a.h-b.h);
+  if(m.length)place(X(m[0].h),Y(m[0].g),"r"+r,{"font-size":10.5,"font-weight":600,fill:LN[l].c,opacity:.8},LEFT);});});
+
+const tb=document.querySelector("#t tbody");
+ORDER.forEach(l=>{const n=LN[l].n;
+ [...D.filter(d=>d.l===l).map(d=>({h:d.h,html:`<td>${n}</td><td>${d.id}</td><td class="n">${d.r}</td><td>${d.s}</td>`+
+   `<td class="n">${ok(d)?f4(d.g):"—"}</td><td class="n">${ok(d)?f4(d.b):"—"}</td><td class="n">${d.e==null?"—":f4(d.e)}</td>`+
+   `<td>${d.v}${d.c?" · 本轮提交":""}</td><td class="n">${fh(d.h)}</td><td class="w">${d.note}${LIVE_NOTE[d.l]&&ok(d)?"；"+LIVE_NOTE[d.l]:""}</td>`})),
+  ...M.filter(m=>m.l===l).map(m=>({h:m.h,html:`<td>${n}</td><td>合并 r${m.r}</td><td class="n">${m.r}</td><td>${m.p}</td>`+
+   `<td class="n">${f4(m.g)}</td><td class="n">—</td><td class="n">—</td><td>integrate${m.c?" · 本轮提交":""}</td><td class="n">${fh(m.h)}</td>`+
+   `<td class="w">integrate agent 自测，不是 verify 独立复测；${m.imp?"高于单个方向":"不高于单个方向，未采用"}</td>`})),
+  ...T.filter(t=>t.l===l).map(t=>({h:t.h,html:`<td>${n}</td><td>P5F 调优 r${t.r}</td><td class="n">${t.r}</td><td>p5f_mode=auto</td>`+
+   `<td class="n">—</td><td class="n">—</td><td class="n">—</td><td>${t.st}</td><td class="n">${fh(t.h)}</td>`+
+   `<td class="w">提交后调优：生成 ${t.gen} 组、实测 ${t.timed} 组参数，${t.st==="improved"?`配对实测延迟 ${t.p.toFixed(4)}×，产生候选`:"没有更快的，未产生候选"}；用时 ${(t.wall/60).toFixed(1)} 分钟</td>`})),
+  ...T.filter(t=>t.l===l&&t.vg).map(t=>({h:t.vh,html:`<td>${n}</td><td>调优后 verify r${t.r}</td><td class="n">${t.r}</td><td>p5f_mode=auto</td>`+
+   `<td class="n">${f4(t.vg)}</td><td class="n">${f4(t.vg)}</td><td class="n">—</td><td>verified${t.cm?" · 提交":""}</td><td class="n">${fh(t.vh)}</td>`+
+   `<td class="w">verify 独立复测调优后的代码；三份完整报告 geomean 中位数 ${f4(t.vm)}</td>`})),
+  ...CUT.filter(k=>k.l===l).map(k=>({h:k.h,html:`<td>${n}</td><td>API 中断</td><td class="n">—</td><td>—</td>`+
+   `<td class="n">—</td><td class="n">—</td><td class="n">—</td><td>已扣除 ${k.x.toFixed(2)}h</td><td class="n">${fh(k.h)}</td>`+
+   `<td class="w">${k.items.map(([w,s,h])=>`${w}（${s}，${h.toFixed(2)}h）`).join("；")}</td>`})),
+  ...F.filter(f=>f.l===l).map(f=>({h:f.h,html:`<td>${n}</td><td>Director</td><td class="n">—</td><td>—</td>`+
+   `<td class="n">${f4(f.g)}</td><td class="n">${f4(f.b)}</td><td class="n">—</td><td>${f.st}</td><td class="n">${fh(f.h)}</td>`+
+   `<td class="w">Director 对最终补丁的独立终验；${f.note}；lane 总耗时 ${f.dur}</td>`}))]
+ .sort((a,b)=>a.h-b.h).forEach(it=>{const tr=document.createElement("tr");tr.innerHTML=it.html;tb.appendChild(tr);});});
+</script></body></html>

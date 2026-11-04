@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>bf16_gemm run4 — 两条 lane 的搜索轨迹</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--off:#2a78d6;--at:#eb6834;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1040px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;--off:#3987e5;--at:#d95926}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--off:#3987e5;--at:#d95926}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.55}
+.lgd{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+.df{width:11px;height:11px;border-radius:50%}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;white-space:nowrap}
+.tt .m{color:var(--tm)}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+circle.pt,text.pt{cursor:pointer}
+</style></head><body><div class="v">
+<h1>bf16_gemm run4：两条 lane 的搜索轨迹（横轴 = 真实耗时）</h1>
+<p class="sub">budget 20 · max_no_improve 8 · 同时于 2026-09-20 12:12:38Z 启动 · Official GPU 0,1,2（<b>8 轮 / 19 格 / 7h20m，预算耗尽退出</b>）· AT GPU 3,4,5（5 轮 / 15 格 / 6h31m，tech_lead 主动 stop）<br>
+每点 = 一个 engineer 方向经 verify 独立复测的 whole-table geomean。细线把同一轮的方向连成一组；粗线顺着每轮最好的方向延续。</p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--off)"></span>GEAK_Official 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--at)"></span>GEAK_With_AT 轮最好</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>regression</span>
+ <span class="lg"><span class="df" style="background:var(--at)"></span>被误判为 verified</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed</span>
+</div>
+<svg id="c" width="980" height="610" role="img" aria-label="run4 两条 lane speedup 随耗时变化"></svg>
+<div class="tt" id="tt"></div>
+<details><summary>数据表（32 个方向）</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">verified geomean</th><th>状态</th><th class="n">完成时刻</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+① 下面板是上面板阴影带（0.96–1.00）的放大，共享时间轴。Official 有 <b>13 个方向挤在 0.97–0.9992</b>，单面板读不出来。<br>
+② <b>AT 的 r4_d1 是一次 verify 误判</b>：它返回 <code>status:"verified"</code> 但 <code>verified_geomean</code> 只有 0.8781。按 <code>verify_engineer.md:64</code>，≤1.0 必须判 <code>regression</code>。该候选因此进入了候选列表并成为 round 4 的 winner；只有 <code>min_improve</code>（&gt;1.01）这道 commit 门拦住了它，没有真的 ship 出去。<b>结论：不能只看 status，必须读 verified_geomean 的数值。</b><br>
+③ <b>Official 是四轮运行里第一个真正 commit 的 lane</b>（<code>final_patch.diff</code> 55,686 字节，commit <code>3f3fd28</code>）。原因是它的 r7_d0 挖出了 harness 根因：<b>engineer workspace 没有 <code>.git</code>、<code>exp/</code> 又被 gitignore，所以文档规定的 <code>git diff &gt; best_patch.diff</code> 静默输出空文件、退出码 0</b>。我已独立复现：在 engineer workspace 执行 <code>git diff</code> → exit=0、0 字节、无 stderr。<br>
+④ 同卡背靠背复测（GPU0，正逆两遍，全部 correctness PASS）：Official r8_d0 = <b>0.9947x</b>（6/12 赢），AT r5_d2 = <b>0.8786x</b>（2/12 赢），<b>Official 快 13.22%</b> —— 名次与前三轮相反。
+</p></div>
+<script>
+const D=[
+["off","r1_d2",1,"?",0,"apply_failed",2.026],["off","r1_d0",1,"memory",0.5900,"regression",2.098],
+["off","r2_d0",2,"compute",0.9799,"regression",3.686],["off","r2_d1",2,"algorithm",0.7574,"regression",3.749],
+["off","r2_d2",2,"host_runtime",0.9722,"regression",3.764],["off","r3_d0",3,"compute",0.9782,"regression",4.425],
+["off","r3_d1",3,"algorithm",0.9876,"regression",4.579],["off","r3_d2",3,"memory",0.9870,"regression",4.685],
+["off","r4_d2",4,"host_runtime",0.9935,"regression",5.184],["off","r4_d0",4,"memory",0.9933,"regression",5.188],
+["off","r4_d1",4,"compute",0.9910,"regression",5.215],["off","r5_d1",5,"compute",0.9951,"regression",5.657],
+["off","r5_d2",5,"host_runtime",0.9907,"regression",5.657],["off","r5_d0",5,"memory",0.9910,"regression",5.912],
+["off","r6_d1",6,"memory",0.9992,"regression",6.398],["off","r6_d0",6,"algorithm",0.9972,"regression",6.470],
+["off","r7_d0",7,"host_runtime",0.9966,"regression",6.825],["off","r8_d0",8,"host_runtime",0.9968,"regression",7.155],
+["at","r1_d2",1,"?",0,"apply_failed",1.085],["at","r1_d0",1,"algorithm",0.7817,"regression",2.244],
+["at","r2_d2",2,"algorithm",0.8023,"regression",3.149],["at","r2_d1",2,"compute",0.7936,"regression",3.196],
+["at","r2_d0",2,"memory",0.7404,"regression",3.200],["at","r3_d0",3,"algorithm",0.8406,"regression",3.853],
+["at","r3_d2",3,"compute",0.7910,"regression",3.853],["at","r3_d1",3,"memory",0.7946,"regression",3.864],
+["at","r4_d1",4,"algorithm",0.8781,"verified",4.361],["at","r4_d0",4,"compute",0.8543,"regression",4.641],
+["at","r4_d2",4,"memory",0,"apply_failed",5.047],["at","r5_d1",5,"host_runtime",0.8797,"regression",5.534],
+["at","r5_d2",5,"compute",0.8823,"regression",5.661],["at","r5_d0",5,"memory",0.8811,"regression",6.248]
+].map(a=>({l:a[0],id:a[1],r:a[2],s:a[3],g:a[4],v:a[5],h:a[6]}));
+
+const W=980,ML=62,MR=140,TMAX=7.4;
+const iw=W-ML-MR;
+const ATY=78,AH=250, BTY=ATY+AH+66,BH=120;
+const ALO=0.55,AHI=1.01,BLO=0.96,BHI=1.001;
+const X=h=>ML+h/TMAX*iw;
+const YA=g=>ATY+AH-(Math.min(Math.max(g,ALO),AHI)-ALO)/(AHI-ALO)*AH;
+const YB=g=>BTY+BH-(g-BLO)/(BHI-BLO)*BH;
+const inB=g=>g>=BLO&&g<=BHI;
+const NS="http://www.w3.org/2000/svg", svg=document.getElementById("c");
+const E=(n,a,t)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined)e.textContent=t;svg.appendChild(e);return e;};
+const C=l=>l==="off"?"var(--off)":"var(--at)", NM=l=>l==="off"?"GEAK_Official":"GEAK_With_AT";
+
+E("rect",{x:ML,y:YA(BHI),width:iw,height:YA(BLO)-YA(BHI),fill:"var(--s2)"});
+[0.6,0.7,0.8,0.9,1.0].forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:YA(g),y2:YA(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:YA(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2));});
+E("line",{x1:ML,x2:ML+iw,y1:YA(1),y2:YA(1),stroke:"var(--ts)","stroke-width":1.5});
+E("text",{x:ML+iw+9,y:YA(1)+4,"font-size":11.5,fill:"var(--ts)"},"1.000 vendor 平价");
+E("text",{x:ML+iw+9,y:YA(0.972)+4,"font-size":10.5,fill:"var(--tm)"},"↓ 阴影带见下方放大");
+E("text",{x:ML-11,y:ATY-10,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup");
+E("line",{x1:ML,x2:ML+iw,y1:ATY+AH,y2:ATY+AH,stroke:"var(--axis)"});
+E("text",{x:ML,y:BTY-16,"font-size":11.5,"font-weight":600,fill:"var(--ts)"},"放大：0.960 – 1.000");
+[0.965,0.975,0.985,0.995].forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:YB(g),y2:YB(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:YB(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(3));});
+E("line",{x1:ML,x2:ML+iw,y1:YB(1),y2:YB(1),stroke:"var(--ts)","stroke-width":1.5});
+E("line",{x1:ML,x2:ML+iw,y1:BTY+BH,y2:BTY+BH,stroke:"var(--axis)"});
+for(let h=0;h<=7;h++){[[ATY,AH],[BTY,BH]].forEach(([t,hh])=>E("line",{x1:X(h),x2:X(h),y1:t,y2:t+hh,stroke:"var(--grid)"}));
+ E("text",{x:X(h),y:BTY+BH+22,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h");}
+E("text",{x:ML+iw,y:BTY+BH+42,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自 wave 启动的小时数");
+E("text",{x:ML-11,y:BTY+BH+58,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值");
+E("line",{x1:ML,x2:ML+iw,y1:BTY+BH+52,y2:BTY+BH+52,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+
+const tt=document.getElementById("tt");
+const hook=(e,d)=>{
+ e.addEventListener("mouseenter",()=>{tt.innerHTML=
+  `<b>${NM(d.l)} · ${d.id}</b><br>specialty: ${d.s}<br>verified geomean: <b>${d.v==="apply_failed"?"—":d.g.toFixed(4)}</b><br>`+
+  `<span class="m">${d.v} · round ${d.r} · 完成于 ${d.h}h</span>`+(d.v==="verified"&&d.g<1?"<br><b>⚠ 误判：≤1.0 本应是 regression</b>":"");
+  tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{tt.style.left=(ev.clientX+15)+"px";tt.style.top=(ev.clientY-14)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+
+["off","at"].forEach(l=>{
+ const rs=[...new Set(D.filter(d=>d.l===l).map(d=>d.r))].sort((a,b)=>a-b);
+ rs.forEach(r=>{
+  const c=D.filter(d=>d.l===l&&d.r===r).sort((a,b)=>a.h-b.h);
+  const cA=c.filter(d=>d.v!=="apply_failed");
+  if(cA.length>1)E("polyline",{points:cA.map(d=>X(d.h)+","+YA(d.g)).join(" "),fill:"none",
+    stroke:C(l),"stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"});
+  const cB=cA.filter(d=>inB(d.g));
+  if(cB.length>1)E("polyline",{points:cB.map(d=>X(d.h)+","+YB(d.g)).join(" "),fill:"none",
+    stroke:C(l),"stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"});
+  const lead=cA[0]||c[0];
+  E("text",{x:X(lead.h)-11,y:YA(lead.g)+(l==="off"?-13:17),"text-anchor":"end","font-size":10.5,
+    "font-weight":600,fill:C(l),opacity:.8},"r"+r);});
+ const best=rs.map(r=>{const c=D.filter(d=>d.l===l&&d.r===r&&d.v!=="apply_failed");
+   return c.length?c.reduce((m,x)=>x.g>m.g?x:m):null;}).filter(Boolean);
+ E("polyline",{points:best.map(p=>X(p.h)+","+YA(p.g)).join(" "),fill:"none",stroke:C(l),
+   "stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"});
+ const bB=best.filter(p=>inB(p.g));
+ if(bB.length>1)E("polyline",{points:bB.map(p=>X(p.h)+","+YB(p.g)).join(" "),fill:"none",stroke:C(l),
+   "stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"});
+ best.forEach(p=>{const up=l==="off";
+  if(inB(p.g)) E("text",{x:X(p.h),y:YB(p.g)+(up?-10:17),"text-anchor":"middle","font-size":10.5,"font-weight":600,fill:C(l)},p.g.toFixed(4));
+  else E("text",{x:X(p.h),y:YA(p.g)+(up?-11:18),"text-anchor":"middle","font-size":10.5,"font-weight":600,fill:C(l)},p.g.toFixed(4));});
+ D.filter(d=>d.l===l).forEach(d=>{let e;
+  if(d.v==="apply_failed") e=E("text",{x:X(d.h),y:BTY+BH+62,"text-anchor":"middle","font-size":15,fill:C(l),class:"pt"},"✕");
+  else { const mis=(d.v==="verified"&&d.g<1);
+   e=E("circle",{cx:X(d.h),cy:YA(d.g),r:5,fill:mis?C(l):"var(--s1)",stroke:C(l),"stroke-width":2.5,class:"pt"});
+   if(mis)E("text",{x:X(d.h)+11,y:YA(d.g)-5,"font-size":13,"font-weight":700,fill:C(l)},"⚠");
+   if(inB(d.g)){const e2=E("circle",{cx:X(d.h),cy:YB(d.g),r:5,fill:"var(--s1)",stroke:C(l),"stroke-width":2.5,class:"pt"});hook(e2,d);} }
+  hook(e,d);});
+});
+const tb=document.querySelector("#t tbody");
+D.slice().sort((a,b)=>a.h-b.h).forEach(d=>{const tr=document.createElement("tr");
+ tr.innerHTML=`<td>${NM(d.l)}</td><td>${d.id}</td><td class="n">${d.r}</td><td>${d.s}</td>
+  <td class="n">${d.v==="apply_failed"?"—":d.g.toFixed(4)}</td><td>${d.v}</td><td class="n">${d.h}h</td>`;
+ tb.appendChild(tr);});
+</script></body></html>

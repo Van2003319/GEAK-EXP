@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>bf16_gemm — 两条 lane 的搜索轨迹（时间轴）</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--off:#2a78d6;--at:#eb6834;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1030px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;
+ --off:#3987e5;--at:#d95926}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--off:#3987e5;--at:#d95926}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.55}
+.lgd{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.df{width:11px;height:11px;border-radius:50%}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;white-space:nowrap}
+.tt .m{color:var(--tm)}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+circle.pt,path.pt,text.pt{cursor:pointer}
+</style></head><body><div class="v">
+<h1>bf16_gemm：两条 lane 的搜索轨迹（横轴 = 真实耗时）</h1>
+<p class="sub">budget 20 · max_no_improve 8 · 同时于 2026-09-18 01:50:06Z 启动 · Official GPU 0,1,2（5 轮后收敛停机 @4.74h）· AT GPU 3,4,5（round 7 进行中）<br>
+每点 = 一个 engineer 方向经 verify 独立复测的 whole-table geomean。<b>细线把同一轮的方向连在一起（同轮=并行跑，细线只表示分组）</b>；粗线顺着每一轮最好的方向延续。</p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--off)"></span>GEAK_Official 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--at)"></span>GEAK_With_AT 轮最好</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="df" style="background:var(--ts)"></span>verified（&gt;1.0）</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>regression</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed</span>
+ <span class="lg"><span style="font-size:13px;color:var(--tm);line-height:1">▼</span>低于轴下限</span>
+</div>
+<svg id="c" width="970" height="520" role="img" aria-label="两条 lane speedup 随真实耗时变化"></svg>
+<div class="tt" id="tt"></div>
+<details><summary>数据表（30 个方向）</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">verified geomean</th><th>状态</th><th class="n">完成时刻</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+★ <b>Official 的 1.0065（r4_d1）不是真实 kernel 胜利。</b>其 tech_lead 最终报告自述：“inside the noise floor it itself measured, i.e. the unmodified baseline” —— patch 未改 <code>gemm_wrapper.py</code>，<code>is_baseline()</code> 保持 True、vendor 拦截未武装，测的是 vendor 自己。Official 真实最好自研 kernel 是 r3_d1 的 ~0.921。<br>
+† AT 的 5 个 verified 是真实自研 kernel：r3_d0 的 patch 174 KB，新增整套 FlyDSL + HIP 多档实现并改写 wrapper，M=2 达 1.3745x。<br>
+‡ 虚线 1.010 = <code>min_improve</code> 的 commit 门。两条 lane 的最好候选都在 1.000 与 1.010 的夹缝里，cumulative 全程 1.000x，<code>final_patch.diff</code> 为空。<br>
+§ 竖直点线 = 上一次实验 <code>max_no_improve=4</code> 的停机时刻（两条 lane 各自第 4 轮结束）；本次两条都越过了它。
+</p></div>
+<script>
+const D=[
+["off","r1_d0",1,"memory",0.8857,"regression",1.186],["off","r1_d1",1,"algorithm",0.3628,"regression",1.259],
+["off","r1_d2",1,"compute",0.1334,"regression",1.566],["off","r2_d2",2,"host_runtime",0.8834,"regression",2.078],
+["off","r2_d1",2,"algorithm",0.9053,"regression",2.194],["off","r2_d0",2,"compute",0.8515,"regression",2.315],
+["off","r3_d1",3,"algorithm",0.9984,"regression",3.054],["off","r3_d0",3,"compute",0.9047,"regression",3.355],
+["off","r4_d0",4,"host_runtime",0.9203,"regression",3.726],["off","r4_d1",4,"memory",1.0065,"verified",3.866,"star"],
+["off","r4_d2",4,"algorithm",0.9201,"regression",3.968],["off","r5_d0",5,"deep_explore",0.9207,"regression",4.737],
+["at","r1_d2",1,"host_runtime",0.8460,"regression",1.117],["at","r1_d1",1,"algorithm",0.8347,"regression",1.234],
+["at","r1_d0",1,"memory",0.5150,"regression",1.437],["at","r2_d2",2,"compute",0.9616,"regression",1.911],
+["at","r2_d1",2,"memory",0.8615,"regression",2.041],["at","r2_d0",2,"algorithm",0,"apply_failed",2.591],
+["at","r3_d0",3,"host_runtime",1.0004,"verified",3.039],["at","r3_d2",3,"compute",0.9594,"regression",3.255],
+["at","r3_d1",3,"algorithm",0.8342,"regression",3.285],["at","r4_d1",4,"memory",0.9985,"regression",3.793],
+["at","r4_d2",4,"algorithm",0.9953,"regression",3.841],["at","r4_d0",4,"compute",0,"apply_failed",4.403],
+["at","r5_d0",5,"algorithm",1.0010,"verified",4.907],["at","r5_d1",5,"memory",0.9982,"regression",4.926],
+["at","r5_d2",5,"host_runtime",1.0016,"verified",4.927],["at","r6_d0",6,"deep_explore",1.0016,"verified",5.374],
+["at","r7_d1",7,"algorithm",0.9970,"regression",5.859],["at","r7_d0",7,"compute",1.0064,"verified",5.904]
+].map(a=>({l:a[0],id:a[1],r:a[2],s:a[3],g:a[4],v:a[5],h:a[6],star:a[7]}));
+
+const W=970,H=520,ML=62,MR=136,MT=34,MB=70,TMAX=6.2;
+const iw=W-ML-MR, ih=H-MT-MB, LO=0.82, HI=1.02;
+const X=h=>ML+h/TMAX*iw;
+const Y=g=>MT+ih-(Math.min(Math.max(g,LO),HI)-LO)/(HI-LO)*ih;
+const NS="http://www.w3.org/2000/svg", svg=document.getElementById("c");
+const E=(n,a,t)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined)e.textContent=t;svg.appendChild(e);return e;};
+const C=l=>l==="off"?"var(--off)":"var(--at)", NM=l=>l==="off"?"GEAK_Official":"GEAK_With_AT";
+
+[0.85,0.90,0.95,1.00].forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:Y(g),y2:Y(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:Y(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2));});
+for(let h=0;h<=6;h++){E("line",{x1:X(h),x2:X(h),y1:MT,y2:MT+ih,stroke:"var(--grid)"});
+ E("text",{x:X(h),y:MT+ih+22,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h");}
+E("line",{x1:ML,x2:ML+iw,y1:MT+ih,y2:MT+ih,stroke:"var(--axis)"});
+E("text",{x:ML-11,y:MT+ih+4,"text-anchor":"end","font-size":11,fill:"var(--tm)"},"≤0.82");
+E("text",{x:ML-11,y:MT-10,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup");
+E("text",{x:ML+iw,y:MT+ih+42,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自 wave 启动的小时数");
+E("line",{x1:ML,x2:ML+iw,y1:Y(1),y2:Y(1),stroke:"var(--ts)","stroke-width":1.5});
+E("text",{x:ML+iw+9,y:Y(1)+4,"font-size":11.5,fill:"var(--ts)"},"1.000 vendor 平价");
+E("line",{x1:ML,x2:ML+iw,y1:Y(1.01),y2:Y(1.01),stroke:"var(--tm)","stroke-width":1.5,"stroke-dasharray":"5 4"});
+E("text",{x:ML+iw+9,y:Y(1.01)-5,"font-size":11.5,fill:"var(--tm)"},"1.010 commit 门");
+// old stop points (end of each lane's round 4)
+[["off",3.968],["at",4.403]].forEach(([l,h])=>{
+ E("line",{x1:X(h),x2:X(h),y1:MT-2,y2:MT+ih+32,stroke:C(l),"stroke-width":1.3,"stroke-dasharray":"2 4",opacity:.6});});
+E("text",{x:X(4.403)+6,y:MT-8,"font-size":10.5,fill:"var(--tm)"},"上次 max_no_improve=4 的停机时刻");
+E("text",{x:ML-11,y:MT+ih+58,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值");
+E("line",{x1:ML,x2:ML+iw,y1:MT+ih+52,y2:MT+ih+52,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+
+const tt=document.getElementById("tt");
+const hook=(e,d)=>{
+ e.addEventListener("mouseenter",()=>{tt.innerHTML=
+  `<b>${NM(d.l)} · ${d.id}</b><br>specialty: ${d.s}<br>verified geomean: <b>${d.v==="apply_failed"?"—":d.g.toFixed(4)}</b><br>`+
+  `<span class="m">${d.v} · round ${d.r} · 完成于 ${d.h}h</span>`+(d.star?"<br><b>★ no-op 测量</b>":"");
+  tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{tt.style.left=(ev.clientX+15)+"px";tt.style.top=(ev.clientY-14)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+const py=d=>d.v==="apply_failed"?MT+ih+62:(d.g<LO?MT+ih-5:Y(d.g));
+
+["off","at"].forEach(l=>{
+ const rs=[...new Set(D.filter(d=>d.l===l).map(d=>d.r))].sort((a,b)=>a-b);
+ // same-round grouping line (time-ordered)
+ rs.forEach(r=>{const c=D.filter(d=>d.l===l&&d.r===r).sort((a,b)=>a.h-b.h);
+  if(c.length>1)E("polyline",{points:c.map(d=>X(d.h)+","+py(d)).join(" "),fill:"none",
+    stroke:C(l),"stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"});
+  const lead=c[0], dy=l==="off"?-1:1;
+  E("text",{x:X(lead.h)-11,y:py(lead)+(dy<0?-13:17),"text-anchor":"end","font-size":10.5,
+    "font-weight":600,fill:C(l),opacity:.8},"r"+r);});
+ // best-of-round continuation
+ const best=rs.map(r=>{const c=D.filter(d=>d.l===l&&d.r===r&&d.v!=="apply_failed");
+   return c.length?c.reduce((m,x)=>x.g>m.g?x:m):null;}).filter(Boolean);
+ E("polyline",{points:best.map(p=>X(p.h)+","+Y(p.g)).join(" "),fill:"none",stroke:C(l),
+   "stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"});
+ best.forEach(p=>{const up=l==="off";
+  E("text",{x:X(p.h),y:Y(p.g)+(up?-11:18),"text-anchor":"middle","font-size":10.5,
+    "font-weight":600,fill:C(l)},p.g.toFixed(4));});
+ // dots
+ D.filter(d=>d.l===l).forEach(d=>{let e;
+  if(d.v==="apply_failed") e=E("text",{x:X(d.h),y:MT+ih+62,"text-anchor":"middle","font-size":15,fill:C(l),class:"pt"},"✕");
+  else if(d.g<LO){e=E("path",{d:`M${X(d.h)-6},${MT+ih-9} L${X(d.h)+6},${MT+ih-9} L${X(d.h)},${MT+ih-1} Z`,fill:C(l),class:"pt"});
+   E("text",{x:X(d.h),y:MT+ih-14,"text-anchor":"middle","font-size":10,fill:C(l)},d.g.toFixed(3));}
+  else e=E("circle",{cx:X(d.h),cy:Y(d.g),r:5.5,fill:d.v==="verified"?C(l):"var(--s1)",
+    stroke:C(l),"stroke-width":2.5,class:"pt"});
+  hook(e,d);
+  if(d.star)E("text",{x:X(d.h)+11,y:Y(d.g)-5,"font-size":13,"font-weight":700,fill:C(l)},"★");});
+ // end marker
+ const lastPt=D.filter(d=>d.l===l).reduce((m,x)=>x.h>m.h?x:m);
+ if(l==="off")E("text",{x:X(4.737)+12,y:Y(0.9207)+4,"font-size":11,fill:C(l),"font-weight":600},"收敛停机");
+});
+const tb=document.querySelector("#t tbody");
+D.slice().sort((a,b)=>a.h-b.h).forEach(d=>{const tr=document.createElement("tr");
+ tr.innerHTML=`<td>${NM(d.l)}</td><td>${d.id}</td><td class="n">${d.r}</td><td>${d.s}</td>
+  <td class="n">${d.v==="apply_failed"?"—":d.g.toFixed(4)}</td><td>${d.v}</td><td class="n">${d.h}h</td>`;
+ tb.appendChild(tr);});
+</script></body></html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>bf16_gemm run3 — 两条 lane 的搜索轨迹</title>
+<style>
+.v{color-scheme:light;--s1:#fcfcfb;--s2:#f4f4f1;--tp:#0b0b0b;--ts:#52514e;--tm:#85847e;
+ --grid:#e6e6e2;--axis:#c9c9c4;--off:#2a78d6;--at:#eb6834;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+ background:var(--s1);color:var(--tp);padding:26px 30px 30px;max-width:1030px;margin:0 auto}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .v{color-scheme:dark;
+ --s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;--tm:#8e8d85;--grid:#323230;--axis:#45443f;
+ --off:#3987e5;--at:#d95926}}
+:root[data-theme=dark] .v{color-scheme:dark;--s1:#1a1a19;--s2:#232321;--tp:#fff;--ts:#c3c2b7;
+ --tm:#8e8d85;--grid:#323230;--axis:#45443f;--off:#3987e5;--at:#d95926}
+h1{font-size:18.5px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+.sub{font-size:12.5px;color:var(--ts);margin:0;line-height:1.55}
+.lgd{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:15px 0 2px;font-size:12.5px;color:var(--ts)}
+.lg{display:flex;gap:7px;align-items:center}
+.sw{width:22px;height:3px;border-radius:2px}
+.sw2{width:22px;height:2px;border-radius:2px;opacity:.5}
+.dh{width:11px;height:11px;border-radius:50%;background:var(--s1);box-sizing:border-box}
+svg{display:block;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--s1);border:1px solid var(--axis);border-radius:7px;
+ padding:8px 11px;font-size:12px;color:var(--tp);opacity:0;transition:opacity .1s;
+ box-shadow:0 5px 18px rgba(0,0,0,.18);z-index:9;line-height:1.55;white-space:nowrap}
+.tt .m{color:var(--tm)}
+table{border-collapse:collapse;font-size:11.5px;margin-top:8px;width:100%}
+th,td{text-align:left;padding:3px 10px 3px 0;border-bottom:1px solid var(--grid);color:var(--ts);white-space:nowrap}
+th{color:var(--tm);font-weight:500}
+td.n,th.n{font-variant-numeric:tabular-nums}
+details{margin-top:20px}summary{font-size:12.5px;color:var(--ts);cursor:pointer}
+.note{font-size:11.5px;color:var(--tm);margin-top:15px;line-height:1.7}
+circle.pt,path.pt,text.pt{cursor:pointer}
+</style></head><body><div class="v">
+<h1>bf16_gemm run3：两条 lane 的搜索轨迹（横轴 = 真实耗时）</h1>
+<p class="sub">budget 20 · max_no_improve 8 · 同时于 2026-09-20 02:53:24Z 启动 · Official GPU 0,1,2（7 轮 / 19 格 / 4h50m）· AT GPU 3,4,5（6 轮 / 16 格 / 4h02m）<br>
+每点 = 一个 engineer 方向经 verify 独立复测的 whole-table geomean。<b>细线把同一轮的方向连成一组（同轮并行跑，细线只表示分组）</b>；粗线顺着每轮最好的方向延续。<b>本轮两条 lane 的 verified 数都是 0，没有任何候选越过 1.000。</b></p>
+<div class="lgd">
+ <span class="lg"><span class="sw" style="background:var(--off)"></span>GEAK_Official 轮最好</span>
+ <span class="lg"><span class="sw" style="background:var(--at)"></span>GEAK_With_AT 轮最好</span>
+ <span class="lg"><span class="sw2" style="background:var(--ts)"></span>同一轮分组</span>
+ <span class="lg"><span class="dh" style="border:2.5px solid var(--ts)"></span>regression（全部）</span>
+ <span class="lg"><span style="font-size:15px;color:var(--tm);line-height:1">✕</span>apply_failed</span>
+</div>
+<svg id="c" width="970" height="600" role="img" aria-label="run3 两条 lane speedup 随耗时变化，含放大面板"></svg>
+<div class="tt" id="tt"></div>
+<details><summary>数据表（33 个方向）</summary>
+<table id="t"><thead><tr><th>lane</th><th>方向</th><th class="n">轮</th><th>specialty</th><th class="n">verified geomean</th><th>状态</th><th class="n">完成时刻</th></tr></thead><tbody></tbody></table></details>
+<p class="note">
+① <b>下面板是上面板阴影带（0.955–1.000）的放大</b>，共享同一条时间轴。本轮 AT 有 7 个方向挤在 0.984–0.998，单面板读不出来；不用断轴，用总览+细节两个面板。<br>
+② 两条 lane <b>没有一个候选被判 verified</b>（verify 对 ≤1.0 一律返回 regression），所以 cumulative 全程 1.000x，两边 <code>final_patch.diff</code> 都是 0 字节，交付的都是原始 baseline。<br>
+③ ✕ = apply_failed，没有产生任何测量值：Official 2 格（r3_d1、r5_d1），AT 1 格（r5_d2）。<br>
+④ <b>deep_explore 的位置差异</b>：AT 放在 round 3（0.9861，把轮最好推高 5.3 点），Official 放在 round 7 最后一轮（0.9454，低于自己 round 5 的 0.9527）。<br>
+⑤ 同卡背靠背复测（GPU0，正逆两遍）：Official r7_d0 = <b>0.9449x</b>，AT r6_d0 = <b>0.9890x</b>，AT 快 4.67%。
+</p></div>
+<script>
+const D=[
+["off","r1_d1",1,"compute",0.4866,"regression",0.842],["off","r1_d0",1,"algorithm",0.7902,"regression",0.929],
+["off","r1_d2",1,"memory",0.6610,"regression",0.930],["off","r2_d0",2,"host_runtime",0.8346,"regression",1.254],
+["off","r2_d1",2,"memory",0.7763,"regression",1.520],["off","r2_d2",2,"compute",0.4896,"regression",1.649],
+["off","r3_d1",3,"compute",0,"apply_failed",2.131],["off","r3_d2",3,"memory",0.8439,"regression",2.388],
+["off","r3_d0",3,"algorithm",0.8317,"regression",2.576],["off","r4_d0",4,"host_runtime",0.9445,"regression",2.993],
+["off","r4_d1",4,"compute",0.9360,"regression",3.009],["off","r4_d2",4,"memory",0.9425,"regression",3.193],
+["off","r5_d1",5,"algorithm",0,"apply_failed",3.532],["off","r5_d0",5,"compute",0.9527,"regression",3.610],
+["off","r5_d2",5,"memory",0.9491,"regression",3.773],["off","r6_d0",6,"memory",0.9518,"regression",4.082],
+["off","r6_d1",6,"compute",0.9485,"regression",4.183],["off","r7_d0",7,"deep_explore",0.9454,"regression",4.614],
+["at","r1_d2",1,"host_runtime",0.9212,"regression",0.828],["at","r1_d0",1,"compute",0.6536,"regression",0.948],
+["at","r1_d1",1,"algorithm",0.8085,"regression",0.969],["at","r2_d2",2,"host_runtime",0.9329,"regression",1.492],
+["at","r2_d0",2,"memory",0.6693,"regression",1.518],["at","r2_d1",2,"algorithm",0.9210,"regression",1.552],
+["at","r3_d0",3,"deep_explore",0.9861,"regression",2.291],["at","r4_d2",4,"host_runtime",0.9973,"regression",2.709],
+["at","r4_d0",4,"memory",0.9846,"regression",2.834],["at","r4_d1",4,"algorithm",0.9847,"regression",2.861],
+["at","r5_d2",5,"compute",0,"apply_failed",3.198],["at","r5_d0",5,"memory",0.9923,"regression",3.313],
+["at","r5_d1",5,"host_runtime",0.9878,"regression",3.330],["at","r6_d1",6,"algorithm",0.9915,"regression",3.672],
+["at","r6_d0",6,"host_runtime",0.9892,"regression",3.779]
+].map(a=>({l:a[0],id:a[1],r:a[2],s:a[3],g:a[4],v:a[5],h:a[6]}));
+
+const W=970,ML=62,MR=136,TMAX=5.0;
+const iw=W-ML-MR;
+const AT_Y=40, AH=250;           // 面板A
+const BT_Y=AT_Y+AH+64, BH=120;   // 面板B
+const A_LO=0.45,A_HI=1.01, B_LO=0.955,B_HI=1.001;
+const X=h=>ML+h/TMAX*iw;
+const YA=g=>AT_Y+AH-(Math.min(Math.max(g,A_LO),A_HI)-A_LO)/(A_HI-A_LO)*AH;
+const YB=g=>BT_Y+BH-(g-B_LO)/(B_HI-B_LO)*BH;
+const inB=g=>g>=B_LO&&g<=B_HI;
+const NS="http://www.w3.org/2000/svg", svg=document.getElementById("c");
+const E=(n,a,t)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);
+ if(t!==undefined)e.textContent=t;svg.appendChild(e);return e;};
+const C=l=>l==="off"?"var(--off)":"var(--at)", NM=l=>l==="off"?"GEAK_Official":"GEAK_With_AT";
+
+// ---- 面板A ----
+E("rect",{x:ML,y:YA(B_HI),width:iw,height:YA(B_LO)-YA(B_HI),fill:"var(--s2)"});
+[0.5,0.6,0.7,0.8,0.9,1.0].forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:YA(g),y2:YA(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:YA(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2));});
+E("line",{x1:ML,x2:ML+iw,y1:YA(1),y2:YA(1),stroke:"var(--ts)","stroke-width":1.5});
+E("text",{x:ML+iw+9,y:YA(1)+4,"font-size":11.5,fill:"var(--ts)"},"1.000 vendor 平价");
+E("text",{x:ML+iw+9,y:YA(0.978)+4,"font-size":11,fill:"var(--tm)"},"↓ 阴影带见下方放大");
+E("text",{x:ML-11,y:AT_Y-10,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"speedup");
+E("line",{x1:ML,x2:ML+iw,y1:AT_Y+AH,y2:AT_Y+AH,stroke:"var(--axis)"});
+// ---- 面板B ----
+E("text",{x:ML,y:BT_Y-16,"font-size":11.5,"font-weight":600,fill:"var(--ts)"},"放大：0.955 – 1.000");
+[0.96,0.97,0.98,0.99,1.00].forEach(g=>{E("line",{x1:ML,x2:ML+iw,y1:YB(g),y2:YB(g),stroke:"var(--grid)"});
+ E("text",{x:ML-11,y:YB(g)+4,"text-anchor":"end","font-size":11.5,fill:"var(--tm)"},g.toFixed(2));});
+E("line",{x1:ML,x2:ML+iw,y1:YB(1),y2:YB(1),stroke:"var(--ts)","stroke-width":1.5});
+E("line",{x1:ML,x2:ML+iw,y1:BT_Y+BH,y2:BT_Y+BH,stroke:"var(--axis)"});
+for(let h=0;h<=5;h++){[ [AT_Y,AH],[BT_Y,BH] ].forEach(([t,hh])=>
+  E("line",{x1:X(h),x2:X(h),y1:t,y2:t+hh,stroke:"var(--grid)"}));
+ E("text",{x:X(h),y:BT_Y+BH+22,"text-anchor":"middle","font-size":11.5,fill:"var(--tm)"},h+"h");}
+E("text",{x:ML+iw,y:BT_Y+BH+42,"text-anchor":"end","font-size":11.5,fill:"var(--ts)"},"自 wave 启动的小时数");
+E("text",{x:ML-11,y:BT_Y+BH+58,"text-anchor":"end","font-size":10.5,fill:"var(--tm)"},"无测量值");
+E("line",{x1:ML,x2:ML+iw,y1:BT_Y+BH+52,y2:BT_Y+BH+52,stroke:"var(--grid)","stroke-dasharray":"3 4"});
+
+const tt=document.getElementById("tt");
+const hook=(e,d)=>{
+ e.addEventListener("mouseenter",()=>{tt.innerHTML=
+  `<b>${NM(d.l)} · ${d.id}</b><br>specialty: ${d.s}<br>verified geomean: <b>${d.v==="apply_failed"?"—":d.g.toFixed(4)}</b><br>`+
+  `<span class="m">${d.v} · round ${d.r} · 完成于 ${d.h}h</span>`; tt.style.opacity=1;});
+ e.addEventListener("mousemove",ev=>{tt.style.left=(ev.clientX+15)+"px";tt.style.top=(ev.clientY-14)+"px";});
+ e.addEventListener("mouseleave",()=>tt.style.opacity=0);};
+const pyA=d=>d.v==="apply_failed"?BT_Y+BH+62:YA(d.g);
+
+["off","at"].forEach(l=>{
+ const rs=[...new Set(D.filter(d=>d.l===l).map(d=>d.r))].sort((a,b)=>a-b);
+ rs.forEach(r=>{
+  const c=D.filter(d=>d.l===l&&d.r===r).sort((a,b)=>a.h-b.h);
+  const cA=c.filter(d=>d.v!=="apply_failed");
+  if(cA.length>1)E("polyline",{points:cA.map(d=>X(d.h)+","+YA(d.g)).join(" "),fill:"none",
+    stroke:C(l),"stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"});
+  const cB=cA.filter(d=>inB(d.g));
+  if(cB.length>1)E("polyline",{points:cB.map(d=>X(d.h)+","+YB(d.g)).join(" "),fill:"none",
+    stroke:C(l),"stroke-width":1.6,opacity:.42,"stroke-linejoin":"round","stroke-linecap":"round"});
+  const lead=cA[0]||c[0], dy=l==="off"?-1:1;
+  E("text",{x:X(lead.h)-11,y:YA(lead.g)+(dy<0?-13:17),"text-anchor":"end","font-size":10.5,
+    "font-weight":600,fill:C(l),opacity:.8},"r"+r);});
+ const best=rs.map(r=>{const c=D.filter(d=>d.l===l&&d.r===r&&d.v!=="apply_failed");
+   return c.length?c.reduce((m,x)=>x.g>m.g?x:m):null;}).filter(Boolean);
+ E("polyline",{points:best.map(p=>X(p.h)+","+YA(p.g)).join(" "),fill:"none",stroke:C(l),
+   "stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"});
+ const bB=best.filter(p=>inB(p.g));
+ if(bB.length>1)E("polyline",{points:bB.map(p=>X(p.h)+","+YB(p.g)).join(" "),fill:"none",stroke:C(l),
+   "stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"});
+ best.forEach(p=>{const up=l==="off";
+  if(inB(p.g)) E("text",{x:X(p.h),y:YB(p.g)+(up?-10:17),"text-anchor":"middle","font-size":10.5,
+      "font-weight":600,fill:C(l)},p.g.toFixed(4));
+  else E("text",{x:X(p.h),y:YA(p.g)+(up?-11:18),"text-anchor":"middle","font-size":10.5,
+      "font-weight":600,fill:C(l)},p.g.toFixed(4));});
+ D.filter(d=>d.l===l).forEach(d=>{
+  let e;
+  if(d.v==="apply_failed") e=E("text",{x:X(d.h),y:BT_Y+BH+62,"text-anchor":"middle","font-size":15,fill:C(l),class:"pt"},"✕");
+  else { e=E("circle",{cx:X(d.h),cy:YA(d.g),r:5,fill:"var(--s1)",stroke:C(l),"stroke-width":2.5,class:"pt"});
+   if(inB(d.g)){const e2=E("circle",{cx:X(d.h),cy:YB(d.g),r:5,fill:"var(--s1)",stroke:C(l),"stroke-width":2.5,class:"pt"});hook(e2,d);} }
+  hook(e,d);});
+});
+const tb=document.querySelector("#t tbody");
+D.slice().sort((a,b)=>a.h-b.h).forEach(d=>{const tr=document.createElement("tr");
+ tr.innerHTML=`<td>${NM(d.l)}</td><td>${d.id}</td><td class="n">${d.r}</td><td>${d.s}</td>
+  <td class="n">${d.v==="apply_failed"?"—":d.g.toFixed(4)}</td><td>${d.v}</td><td class="n">${d.h}h</td>`;
+ tb.appendChild(tr);});
+</script></body></html>
